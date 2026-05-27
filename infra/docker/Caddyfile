@@ -1,0 +1,25 @@
+{
+  admin off
+}
+
+{$HOMEMONITOR_HOST} {
+  encode gzip zstd
+
+  handle /api/* {
+    reverse_proxy api:4000
+  }
+
+  handle /health {
+    reverse_proxy api:4000
+  }
+
+  handle /agent {
+    reverse_proxy api:4000
+  }
+
+  handle /live {
+    reverse_proxy api:4000
+  }
+
+  reverse_proxy web:3000
+}

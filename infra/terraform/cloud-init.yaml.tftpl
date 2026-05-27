@@ -1,0 +1,21 @@
+#cloud-config
+users:
+  - name: ubuntu
+    groups: sudo, docker
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - rsync
+
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/homemonitor
+  - chown ubuntu:ubuntu /opt/homemonitor
+  - echo "HomeMonitor VM ready for ${domain_name}" > /opt/homemonitor/README.txt
