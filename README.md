@@ -15,10 +15,10 @@ curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/
 If the repository is private, use a GitHub token with read access:
 
 ```bash
-GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash'
+GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo -E bash'
 ```
 
-The installer creates `/opt/homemonitor-ruview`, installs Docker if needed, starts Caddy on port `80`, and runs `ruvnet/wifi-densepose:latest` with simulated data. It prints the generated basic-auth password at the end.
+The installer creates `/opt/homemonitor-ruview`, installs Docker if needed, starts Caddy on port `80`, and runs `ruvnet/wifi-densepose:latest` with simulated data. It copies the native RuView UI from the image, applies the HomeMonitor Russian UI overlay, and persists models/recordings under `/opt/homemonitor-ruview/data`. It prints the generated basic-auth password at the end.
 It also configures RuView's `SENSING_ALLOWED_HOSTS` allowlist for public-IP access.
 
 Open:

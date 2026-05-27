@@ -17,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/
 If the repository is private, run it with a GitHub token that can read this repo:
 
 ```bash
-GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash'
+GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo -E bash'
 ```
 
 The installer:
@@ -26,7 +26,9 @@ The installer:
 - creates `/opt/homemonitor-ruview`;
 - starts Caddy on public `:80`;
 - starts `ruvnet/wifi-densepose:latest` with simulated CSI data;
+- copies the native RuView UI from the Docker image and applies the HomeMonitor Russian UI overlay;
 - publishes ESP32 UDP `5005/udp` for later hardware;
+- persists models, state, and CSI recordings under `/opt/homemonitor-ruview/data`;
 - enables basic auth by default and prints the generated password.
 
 Open:
@@ -36,6 +38,9 @@ http://<VM_PUBLIC_IP>/
 ```
 
 The public root `/` is mapped to RuView's native web app at `/ui/index.html`.
+The UI opens in Russian by default. Technical terms without stable Russian
+usage stay in English, for example CSI, RSSI, API, WebSocket, LoRA, RVF, PCK,
+OKS, FPS, WiFi DensePose, Pose Fusion, and Observatory.
 The VM also exposes short links for the bundled RuView pages:
 
 - `/observatory` -> `/ui/observatory.html`

@@ -14,6 +14,7 @@ HOMEMONITOR_BASIC_AUTH_PASSWORD="${HOMEMONITOR_BASIC_AUTH_PASSWORD:-}"
 RUVIEW_API_TOKEN="${RUVIEW_API_TOKEN:-}"
 HOMEMONITOR_PUBLIC_HOST="${HOMEMONITOR_PUBLIC_HOST:-}"
 SENSING_ALLOWED_HOSTS="${SENSING_ALLOWED_HOSTS:-}"
+HOMEMONITOR_RAW_BASE="${HOMEMONITOR_RAW_BASE:-https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main}"
 
 if [ "${EUID}" -ne 0 ]; then
   echo "Please run this installer with sudo/root, for example:"
@@ -50,9 +51,59 @@ detect_public_ip() {
     || echo "<VM_PUBLIC_IP>"
 }
 
+fetch_repo_file() {
+  local path="$1"
+  local url="${HOMEMONITOR_RAW_BASE%/}/${path}"
+
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" "${url}"
+  else
+    curl -fsSL "${url}"
+  fi
+}
+
+download_overlay_file() {
+  local source_path="$1"
+  local target_path="$2"
+
+  if ! fetch_repo_file "${source_path}" > "${target_path}"; then
+    echo "Failed to download ${source_path}." >&2
+    echo "If this repository is private, rerun with GITHUB_TOKEN and sudo -E." >&2
+    exit 1
+  fi
+}
+
+inject_i18n_script() {
+  local page_path="$1"
+
+  if [ -f "${page_path}" ] && ! grep -q './utils/i18n.js' "${page_path}"; then
+    sed -i 's#</body>#  <script type="module" src="./utils/i18n.js"></script>\n</body>#' "${page_path}"
+  fi
+}
+
+prepare_ruview_ui() {
+  echo "Preparing Russian RuView UI overlay..."
+
+  rm -rf ui
+  mkdir -p ui
+
+  local container_id
+  container_id="$(docker create "${RUVIEW_IMAGE}:${RUVIEW_TAG}")"
+  docker cp "${container_id}:/app/ui/." ui/
+  docker rm "${container_id}" >/dev/null
+
+  mkdir -p ui/utils
+  download_overlay_file "deploy/ruview-vm/ui-overrides/i18n.js" "ui/utils/i18n.js"
+  download_overlay_file "deploy/ruview-vm/ui-overrides/sw.js" "ui/sw.js"
+
+  inject_i18n_script "ui/observatory.html"
+  inject_i18n_script "ui/pose-fusion.html"
+  inject_i18n_script "ui/viz.html"
+}
+
 install_docker
 
-mkdir -p "${INSTALL_DIR}/data/models" "${INSTALL_DIR}/data/state"
+mkdir -p "${INSTALL_DIR}/data/models" "${INSTALL_DIR}/data/state" "${INSTALL_DIR}/data/recordings"
 cd "${INSTALL_DIR}"
 
 DETECTED_PUBLIC_IP="$(detect_public_ip)"
@@ -81,6 +132,7 @@ fi
 cat > Caddyfile <<EOF_CADDY
 :80 {
   encode gzip zstd
+  header /ui/* Cache-Control "no-store"
 
   ${BASIC_AUTH_BLOCK}
 
@@ -140,8 +192,8 @@ services:
     ports:
       - "${ESP32_UDP_PORT:-5005}:5005/udp"
     volumes:
-      - ./data/models:/app/data/models
-      - ./data/state:/app/data/state
+      - ./ui:/app/ui:ro
+      - ./data:/app/data
 
 volumes:
   caddy_data:
@@ -150,6 +202,7 @@ EOF_COMPOSE
 
 echo "Pulling RuView image..."
 docker compose pull
+prepare_ruview_ui
 docker compose up -d
 
 if command -v ufw >/dev/null 2>&1; then

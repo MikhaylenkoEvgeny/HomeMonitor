@@ -13,11 +13,13 @@ curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/
 If this repo is private:
 
 ```bash
-GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash'
+GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo -E bash'
 ```
 
 The VM serves RuView at `http://<VM_PUBLIC_IP>/` through Caddy on port `80`.
 The installer sets RuView's `SENSING_ALLOWED_HOSTS` so the public IP is accepted by its DNS-rebinding defense.
+It also applies the HomeMonitor Russian UI overlay and keeps `/opt/homemonitor-ruview/data`
+persistent for models, state, and CSI recordings.
 
 Open in Yandex Cloud security group:
 
