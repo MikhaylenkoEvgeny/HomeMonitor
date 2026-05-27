@@ -35,6 +35,13 @@ Open:
 http://<VM_PUBLIC_IP>/
 ```
 
+The public root `/` is mapped to RuView's native web app at `/ui/index.html`.
+The VM also exposes short links for the bundled RuView pages:
+
+- `/observatory` -> `/ui/observatory.html`
+- `/pose-fusion` -> `/ui/pose-fusion.html`
+- `/viz` -> `/ui/viz.html`
+
 ## Useful overrides
 
 ```bash

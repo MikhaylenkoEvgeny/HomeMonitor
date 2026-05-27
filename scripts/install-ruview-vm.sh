@@ -84,6 +84,11 @@ cat > Caddyfile <<EOF_CADDY
 
   ${BASIC_AUTH_BLOCK}
 
+  rewrite / /ui/index.html
+  redir /observatory /ui/observatory.html 302
+  redir /pose-fusion /ui/pose-fusion.html 302
+  redir /viz /ui/viz.html 302
+
   @sensing_ws path /ws/sensing*
   reverse_proxy @sensing_ws ruview:3001 {
     header_up Host ruview:3001
