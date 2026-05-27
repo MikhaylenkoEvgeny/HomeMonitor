@@ -1,5 +1,31 @@
 # Deployment
 
+## Current path: native RuView UI on a VM
+
+Use the official RuView Docker image through the HomeMonitor VM installer.
+
+If this repo is public:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash
+```
+
+If this repo is private:
+
+```bash
+GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash'
+```
+
+The VM serves RuView at `http://<VM_PUBLIC_IP>/` through Caddy on port `80`.
+
+Open in Yandex Cloud security group:
+
+- TCP `80`;
+- UDP `5005` later for ESP32 CSI packets.
+
+The sections below describe the parked TypeScript prototype and are not needed
+for the current RuView VM deployment.
+
 ## Local
 
 ```bash

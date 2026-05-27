@@ -1,52 +1,46 @@
 # HomeMonitor
 
-Family-first home monitoring platform for ESP32 CSI experiments, Raspberry Pi relay, and a cloud dashboard in Yandex Cloud.
+Cloud deployment wrapper for the ready-made RuView / WiFi-DensePose interface.
 
-The repository is intentionally runnable before the hardware arrives:
+Current direction: do not use the experimental HomeMonitor dashboard as the main UI. Run the native RuView Docker image on a Yandex Cloud VM and open it by public IP.
 
-- `apps/api` receives Pi-agent telemetry over WebSocket, keeps a live home snapshot, exposes REST endpoints, and fans updates out to the web UI.
-- `apps/web` is a Next.js PWA-style dashboard focused on rooms, people-at-home state, alerts, devices, and history.
-- `apps/pi-agent` runs on Raspberry Pi, keeps an outbound-only relay to the cloud, buffers messages locally, and currently uses a simulator adapter.
-- `apps/simulator` is a direct cloud simulator for demos and load checks.
-- `packages/types`, `packages/ui`, and `packages/db` hold shared contracts, UI primitives, and database migrations.
-- `infra` contains Docker Compose and Yandex Cloud Terraform/OpenTofu scaffolding.
+## VM install
 
-## Local quick start
+If the repository is public:
 
 ```bash
-npm install
-npm run build
-npm run test
-npm run dev:api
+curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash
 ```
 
-In another terminal:
+If the repository is private, use a GitHub token with read access:
 
 ```bash
-npm run dev:web
-npm run dev:agent
+GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash'
 ```
 
-Open `http://localhost:3000`. The dashboard will show synthetic rooms and live telemetry. The default agent token is `dev-agent-token`; change it before deployment.
+The installer creates `/opt/homemonitor-ruview`, installs Docker if needed, starts Caddy on port `80`, and runs `ruvnet/wifi-densepose:latest` with simulated data. It prints the generated basic-auth password at the end.
 
-## Cloud shape
+Open:
 
-The first deployment target is a small Yandex Compute VM running Docker Compose:
+```text
+http://<VM_PUBLIC_IP>/
+```
 
-- `caddy` terminates HTTP/HTTPS and proxies `/api`, `/agent`, and `/live`.
-- `web` serves the Next.js UI.
-- `api` accepts REST, live WebSocket, and Pi-agent WebSocket traffic.
-- `worker` handles retention and background maintenance.
-- `timescaledb`, `redis`, and optional `grafana` support data storage and diagnostics.
+Yandex Cloud security group:
 
-Raw/high-frequency telemetry is designed for Object Storage as compressed `.jsonl.gz` objects with relational indexes in Postgres/TimescaleDB. Scalar telemetry and events are stored in TimescaleDB.
+- open TCP `80`;
+- open UDP `5005` later, when ESP32 starts streaming CSI.
 
-## Hardware path
+See [deploy/ruview-vm/README.md](deploy/ruview-vm/README.md) for overrides.
 
-The Pi agent has a simulator adapter now. Later adapters should be added without changing the cloud contract:
+## What runs
 
-- RuView UDP ingest.
-- ESP32-CSI raw CSV/UDP ingest.
-- System health and device diagnostics.
+- UI/API: official `ruvnet/wifi-densepose:latest`.
+- HTTP access: Caddy reverse proxy on public `:80`.
+- Sensing WebSocket: proxied from `/ws/sensing` to RuView's internal `:3001`.
+- ESP32 CSI UDP: host `5005/udp` to container `5005/udp`.
+- Default data source: `CSI_SOURCE=simulated`, so the interface works before hardware arrives.
 
-The home network stays closed: the Raspberry Pi keeps an outbound WebSocket to the cloud and retries with a local outbox when offline.
+## Parked prototype
+
+The TypeScript HomeMonitor stack under `apps/` and `packages/` is kept in the repo for later experiments, but it is not used by the VM installer.

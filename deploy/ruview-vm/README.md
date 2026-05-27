@@ -1,0 +1,55 @@
+# RuView VM deployment
+
+This is the current deployment path for the cloud UI: run the official RuView
+Docker image on a small Ubuntu/Debian VM and expose it by public IP.
+
+It intentionally does not build or serve the experimental `apps/web` dashboard.
+The VM serves the native RuView UI from `ruvnet/wifi-densepose:latest`.
+
+## One-command install
+
+If the repository is public:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash
+```
+
+If the repository is private, run it with a GitHub token that can read this repo:
+
+```bash
+GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo bash'
+```
+
+The installer:
+
+- installs Docker if needed;
+- creates `/opt/homemonitor-ruview`;
+- starts Caddy on public `:80`;
+- starts `ruvnet/wifi-densepose:latest` with simulated CSI data;
+- publishes ESP32 UDP `5005/udp` for later hardware;
+- enables basic auth by default and prints the generated password.
+
+Open:
+
+```text
+http://<VM_PUBLIC_IP>/
+```
+
+## Useful overrides
+
+```bash
+CSI_SOURCE=auto sudo -E bash scripts/install-ruview-vm.sh
+CSI_SOURCE=esp32 sudo -E bash scripts/install-ruview-vm.sh
+RUVIEW_TAG=latest sudo -E bash scripts/install-ruview-vm.sh
+HOMEMONITOR_BASIC_AUTH_PASSWORD='change-me' sudo -E bash scripts/install-ruview-vm.sh
+HOMEMONITOR_BASIC_AUTH=0 sudo -E bash scripts/install-ruview-vm.sh
+```
+
+## VM firewall
+
+Open these inbound rules in Yandex Cloud:
+
+- TCP `80` from your IP or from `0.0.0.0/0` while testing;
+- UDP `5005` when ESP32 nodes are ready to stream CSI to the VM.
+
+No domain is required for the first version.
