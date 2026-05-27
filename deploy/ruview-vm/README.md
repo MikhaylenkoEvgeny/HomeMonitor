@@ -43,6 +43,8 @@ CSI_SOURCE=esp32 sudo -E bash scripts/install-ruview-vm.sh
 RUVIEW_TAG=latest sudo -E bash scripts/install-ruview-vm.sh
 HOMEMONITOR_BASIC_AUTH_PASSWORD='change-me' sudo -E bash scripts/install-ruview-vm.sh
 HOMEMONITOR_BASIC_AUTH=0 sudo -E bash scripts/install-ruview-vm.sh
+HOMEMONITOR_PUBLIC_HOST=203.0.113.10 sudo -E bash scripts/install-ruview-vm.sh
+SENSING_ALLOWED_HOSTS=203.0.113.10,203.0.113.10:80 sudo -E bash scripts/install-ruview-vm.sh
 ```
 
 ## VM firewall

@@ -19,6 +19,7 @@ GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" 
 ```
 
 The installer creates `/opt/homemonitor-ruview`, installs Docker if needed, starts Caddy on port `80`, and runs `ruvnet/wifi-densepose:latest` with simulated data. It prints the generated basic-auth password at the end.
+It also configures RuView's `SENSING_ALLOWED_HOSTS` allowlist for public-IP access.
 
 Open:
 

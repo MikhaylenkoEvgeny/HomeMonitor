@@ -12,6 +12,8 @@ HOMEMONITOR_BASIC_AUTH="${HOMEMONITOR_BASIC_AUTH:-1}"
 HOMEMONITOR_BASIC_AUTH_USER="${HOMEMONITOR_BASIC_AUTH_USER:-admin}"
 HOMEMONITOR_BASIC_AUTH_PASSWORD="${HOMEMONITOR_BASIC_AUTH_PASSWORD:-}"
 RUVIEW_API_TOKEN="${RUVIEW_API_TOKEN:-}"
+HOMEMONITOR_PUBLIC_HOST="${HOMEMONITOR_PUBLIC_HOST:-}"
+SENSING_ALLOWED_HOSTS="${SENSING_ALLOWED_HOSTS:-}"
 
 if [ "${EUID}" -ne 0 ]; then
   echo "Please run this installer with sudo/root, for example:"
@@ -53,6 +55,12 @@ install_docker
 mkdir -p "${INSTALL_DIR}/data/models" "${INSTALL_DIR}/data/state"
 cd "${INSTALL_DIR}"
 
+DETECTED_PUBLIC_IP="$(detect_public_ip)"
+PUBLIC_HOST="${HOMEMONITOR_PUBLIC_HOST:-${DETECTED_PUBLIC_IP}}"
+if [ -z "${SENSING_ALLOWED_HOSTS}" ]; then
+  SENSING_ALLOWED_HOSTS="localhost,localhost:3000,localhost:3001,127.0.0.1,127.0.0.1:3000,127.0.0.1:3001,ruview,ruview:3000,ruview:3001,${PUBLIC_HOST},${PUBLIC_HOST}:${PUBLIC_HTTP_PORT}"
+fi
+
 if [ "${HOMEMONITOR_BASIC_AUTH}" = "1" ]; then
   if [ -z "${HOMEMONITOR_BASIC_AUTH_PASSWORD}" ]; then
     HOMEMONITOR_BASIC_AUTH_PASSWORD="$(random_password)"
@@ -77,9 +85,13 @@ cat > Caddyfile <<EOF_CADDY
   ${BASIC_AUTH_BLOCK}
 
   @sensing_ws path /ws/sensing*
-  reverse_proxy @sensing_ws ruview:3001
+  reverse_proxy @sensing_ws ruview:3001 {
+    header_up Host ruview:3001
+  }
 
-  reverse_proxy ruview:3000
+  reverse_proxy ruview:3000 {
+    header_up Host ruview:3000
+  }
 }
 EOF_CADDY
 
@@ -91,6 +103,7 @@ RUST_LOG=${RUST_LOG}
 PUBLIC_HTTP_PORT=${PUBLIC_HTTP_PORT}
 ESP32_UDP_PORT=${ESP32_UDP_PORT}
 RUVIEW_API_TOKEN=${RUVIEW_API_TOKEN}
+SENSING_ALLOWED_HOSTS=${SENSING_ALLOWED_HOSTS}
 EOF_ENV
 
 cat > docker-compose.yml <<'EOF_COMPOSE'
@@ -115,6 +128,7 @@ services:
       MODELS_DIR: "/app/data/models"
       RUST_LOG: "${RUST_LOG:-info}"
       RUVIEW_API_TOKEN: "${RUVIEW_API_TOKEN:-}"
+      SENSING_ALLOWED_HOSTS: "${SENSING_ALLOWED_HOSTS:-localhost,localhost:3000,localhost:3001,127.0.0.1,127.0.0.1:3000,127.0.0.1:3001,ruview,ruview:3000,ruview:3001}"
     expose:
       - "3000"
       - "3001"
@@ -138,11 +152,11 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow "${ESP32_UDP_PORT}/udp" >/dev/null || true
 fi
 
-PUBLIC_IP="$(detect_public_ip)"
+PUBLIC_IP="${DETECTED_PUBLIC_IP}"
 if [ "${PUBLIC_HTTP_PORT}" = "80" ]; then
-  PUBLIC_URL="http://${PUBLIC_IP}/"
+  PUBLIC_URL="http://${PUBLIC_HOST}/"
 else
-  PUBLIC_URL="http://${PUBLIC_IP}:${PUBLIC_HTTP_PORT}/"
+  PUBLIC_URL="http://${PUBLIC_HOST}:${PUBLIC_HTTP_PORT}/"
 fi
 
 cat <<EOF_DONE
@@ -162,6 +176,9 @@ Commands:
 
 CSI source:
   ${CSI_SOURCE}
+
+RuView allowed hosts:
+  ${SENSING_ALLOWED_HOSTS}
 
 EOF_DONE
 

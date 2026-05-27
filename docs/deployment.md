@@ -17,6 +17,7 @@ GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" 
 ```
 
 The VM serves RuView at `http://<VM_PUBLIC_IP>/` through Caddy on port `80`.
+The installer sets RuView's `SENSING_ALLOWED_HOSTS` so the public IP is accepted by its DNS-rebinding defense.
 
 Open in Yandex Cloud security group:
 
