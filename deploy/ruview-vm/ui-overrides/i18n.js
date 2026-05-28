@@ -1135,9 +1135,23 @@ function buildHomeMonitorSummary(parts) {
   const firstNode = nodes[0] || {};
   const firstFeature = nodeFeatures[0] || {};
   const classification = latest.classification || {};
+  const nodeClassification = firstFeature.classification || {};
   const vitals = latest.vital_signs || {};
   const source = pickFirst(latest.source, status.source, health.source, 'unknown');
   const hasNoDataStatus = String(latest.status || '').toLowerCase().includes('no data');
+  const globalConfidence = safeNumber(classification.confidence, 0);
+  const nodeConfidence = safeNumber(nodeClassification.confidence, 0);
+  const globalLooksEmpty = (
+    globalConfidence === 0 &&
+    classification.presence === false &&
+    ['absent', 'none', ''].includes(String(classification.motion_level || classification.motion || '').toLowerCase())
+  );
+  const useNodeClassification = globalLooksEmpty && (
+    nodeClassification.presence === true ||
+    nodeConfidence > 0 ||
+    String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase().includes('present')
+  );
+  const effectiveClassification = useNodeClassification ? nodeClassification : classification;
   const hasRawCsi = nodes.some(node => {
     const subcarriers = safeNumber(node.subcarrier_count, 0);
     const amplitude = Array.isArray(node.amplitude) ? node.amplitude.length : 0;
@@ -1160,9 +1174,9 @@ function buildHomeMonitorSummary(parts) {
     nodeCount: nodeIds.length || nodes.length || nodeFeatures.length || 0,
     nodeLabel: nodeIds.length ? nodeIds.map(id => `node ${id}`).join(', ') : '-',
     rssi: pickFirst(firstNode.rssi_dbm, firstFeature.rssi_dbm, latest.features?.mean_rssi),
-    presence: pickFirst(classification.presence, latest.presence),
-    motion: pickFirst(classification.motion, latest.motion_state, latest.motion),
-    confidence: pickFirst(classification.confidence, latest.confidence),
+    presence: pickFirst(effectiveClassification.presence, latest.presence),
+    motion: pickFirst(effectiveClassification.motion, effectiveClassification.motion_level, latest.motion_state, latest.motion),
+    confidence: pickFirst(effectiveClassification.confidence, latest.confidence),
     respiration: pickFirst(vitals.respiration_bpm, vitals.breathing_bpm, firstFeature.respiration_bpm),
     heartRate: pickFirst(vitals.heart_rate_bpm, vitals.hr_bpm, firstFeature.heart_rate_bpm),
     clients: pickFirst(health.clients, latest.clients),
@@ -1772,6 +1786,29 @@ function updateNativeIndexFields(summary) {
   }
 }
 
+function updateSensingFields(summary) {
+  const sensing = document.getElementById('sensing');
+  if (!sensing) return;
+
+  const present = hasPresence(summary);
+  const motion = String(summary.motion || '').toLowerCase();
+  const label = motion.includes('moving') || motion.includes('motion') || motion.includes('active')
+    ? 'MOTION'
+    : present ? 'PRESENT' : 'ABSENT';
+  const confidence = safeNumber(summary.confidence, 0);
+  const confidencePct = Math.max(0, Math.min(100, confidence <= 1 ? confidence * 100 : confidence));
+
+  setText('#sensingRssi', formatRssi(summary), sensing);
+  setText('#sensingSource', summary.source || 'esp32', sensing);
+  setText('#sensingNodeCount', String(summary.nodeCount || 0), sensing);
+  setText('#classLabel', label, sensing);
+  setText('#valConfidence', `${confidencePct.toFixed(0)}%`, sensing);
+  setWidth('#barConfidence', confidencePct, sensing);
+
+  const classLabel = sensing.querySelector('#classLabel');
+  if (classLabel) classLabel.className = `sensing-class-label ${label.toLowerCase()}`;
+}
+
 function updatePoseFusionFields(summary) {
   if (!document.getElementById('mode-select')) return;
   const mode = classifyLiveMode(summary);
@@ -1887,6 +1924,7 @@ function updateHomeMonitorLivePanels(summary) {
   ensureHardwareDisclaimer(document.getElementById('hardware'));
   ensureSensingVisualizationDisclaimer(document.getElementById('sensing'));
   updateNativeIndexFields(summary);
+  updateSensingFields(summary);
   updatePoseFusionFields(summary);
   updateObservatoryFields(summary);
   updateStandalonePanels(summary);
