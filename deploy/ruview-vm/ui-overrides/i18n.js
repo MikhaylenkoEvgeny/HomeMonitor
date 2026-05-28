@@ -826,10 +826,17 @@ function normalizeHomeMonitorSensingFrame(data) {
   }
 
   const rssi = pickFirst(featureWithClassification.rssi_dbm, data.features?.mean_rssi);
+  const featureValues = featureWithClassification.features || {};
   if (rssi !== undefined && rssi !== null) {
     normalized.features = {
+      ...featureValues,
       ...(data.features || {}),
       mean_rssi: rssi
+    };
+  } else if (Object.keys(featureValues).length > 0) {
+    normalized.features = {
+      ...featureValues,
+      ...(data.features || {})
     };
   }
 
@@ -1448,6 +1455,10 @@ function buildHomeMonitorSummary(parts) {
     nodeCount: nodeIds.length || nodes.length || nodeFeatures.length || 0,
     nodeLabel: nodeIds.length ? nodeIds.map(id => `node ${id}`).join(', ') : '-',
     rssi: pickFirst(firstNode.rssi_dbm, firstFeature.rssi_dbm, latest.features?.mean_rssi),
+    features: {
+      ...(firstFeature.features || {}),
+      ...(latest.features || {})
+    },
     presence: pickFirst(effectiveClassification.presence, latest.presence),
     motion: pickFirst(effectiveClassification.motion, effectiveClassification.motion_level, latest.motion_state, latest.motion),
     confidence: pickFirst(effectiveClassification.confidence, latest.confidence),
@@ -2135,6 +2146,95 @@ function setHomeMonitorSensingClassLabel(root, summaryOrData) {
   classLabel.className = `sensing-class-label ${level}`;
 }
 
+function formatHomeMonitorSensingRssi(value) {
+  const number = safeNumber(value);
+  return number === null ? '-- dBm' : `${number.toFixed(1)} dBm`;
+}
+
+function formatHomeMonitorSensingMetric(value, digits = 3) {
+  const number = safeNumber(value, 0);
+  return number.toFixed(digits);
+}
+
+function homeMonitorSensingHudFromData(data) {
+  const normalized = normalizeHomeMonitorSensingFrame(data);
+  const featureNode = Array.isArray(normalized.node_features) ? normalized.node_features[0] || {} : {};
+  const node = Array.isArray(normalized.nodes) ? normalized.nodes[0] || {} : {};
+  const features = {
+    ...(featureNode.features || {}),
+    ...(normalized.features || {})
+  };
+  const classification = normalizeHomeMonitorClassification(normalized.classification || featureNode.classification || {});
+  const nodeIds = [...new Set([
+    ...(Array.isArray(normalized.nodes) ? normalized.nodes.map(item => item.node_id) : []),
+    ...(Array.isArray(normalized.node_features) ? normalized.node_features.map(item => item.node_id) : [])
+  ].filter(value => value !== undefined && value !== null))];
+
+  return {
+    source: normalized.source || '',
+    nodeCount: nodeIds.length || (normalized.nodes || []).length || (normalized.node_features || []).length || 0,
+    rssi: pickFirst(features.mean_rssi, featureNode.rssi_dbm, node.rssi_dbm),
+    classification,
+    confidence: classification.confidence,
+    variance: features.variance,
+    motionBand: features.motion_band_power,
+    breathBand: features.breathing_band_power,
+    spectralPower: features.spectral_power,
+    dominantFreq: features.dominant_freq_hz,
+    changePoints: features.change_points
+  };
+}
+
+function homeMonitorSensingHudFromSummary(summary) {
+  return {
+    source: summary.source || 'esp32',
+    nodeCount: summary.nodeCount || 0,
+    rssi: summary.rssi,
+    classification: normalizeHomeMonitorClassification({
+      presence: hasPresence(summary),
+      motion_level: summary.motion,
+      confidence: summary.confidence
+    }),
+    confidence: summary.confidence,
+    variance: summary.features?.variance,
+    motionBand: summary.features?.motion_band_power,
+    breathBand: summary.features?.breathing_band_power,
+    spectralPower: summary.features?.spectral_power,
+    dominantFreq: summary.features?.dominant_freq_hz,
+    changePoints: summary.features?.change_points
+  };
+}
+
+function setHomeMonitorSensingBar(root, barId, valueId, value, max, text = null) {
+  const number = safeNumber(value, 0);
+  setWidth(`#${barId}`, max > 0 ? (number / max) * 100 : 0, root);
+  setText(`#${valueId}`, text ?? formatHomeMonitorSensingMetric(number), root);
+}
+
+function applyHomeMonitorSensingHud(root, hud) {
+  const container = root || document;
+  const confidence = safeNumber(hud.confidence, 0);
+  const confidencePct = Math.max(0, Math.min(100, confidence <= 1 ? confidence * 100 : confidence));
+
+  setText('#sensingRssi', formatHomeMonitorSensingRssi(hud.rssi), container);
+  setText('#sensingSource', hud.source || 'esp32', container);
+  setText('#sensingNodeCount', String(hud.nodeCount || 0), container);
+  setHomeMonitorSensingBar(container, 'barVariance', 'valVariance', hud.variance, 10, formatHomeMonitorSensingMetric(hud.variance, 3));
+  setHomeMonitorSensingBar(container, 'barMotion', 'valMotion', hud.motionBand, 0.5, formatHomeMonitorSensingMetric(hud.motionBand, 3));
+  setHomeMonitorSensingBar(container, 'barBreath', 'valBreath', hud.breathBand, 0.3, formatHomeMonitorSensingMetric(hud.breathBand, 3));
+  setHomeMonitorSensingBar(container, 'barSpectral', 'valSpectral', hud.spectralPower, 2, formatHomeMonitorSensingMetric(hud.spectralPower, 3));
+  setText('#valConfidence', `${confidencePct.toFixed(0)}%`, container);
+  setWidth('#barConfidence', confidencePct, container);
+  setText('#valDomFreq', `${formatHomeMonitorSensingMetric(hud.dominantFreq, 3)} Hz`, container);
+  setText('#valChangePoints', String(Math.round(safeNumber(hud.changePoints, 0))), container);
+  setText('#valSampleRate', isHomeMonitorEsp32Source(hud.source) ? 'esp32' : (isHomeMonitorDemoSource(hud.source) ? 'sim' : hud.source || 'live'), container);
+  setHomeMonitorSensingClassLabel(container, {
+    classification: hud.classification,
+    motion: hud.classification?.motion_level,
+    presence: hud.classification?.presence
+  });
+}
+
 function installHomeMonitorSensingTabPatch() {
   if (homeMonitorSensingTabPatched || !SensingTab?.prototype) return;
   if (typeof SensingTab.prototype._updateHUD !== 'function') return;
@@ -2143,7 +2243,7 @@ function installHomeMonitorSensingTabPatch() {
   SensingTab.prototype._updateHUD = function patchedUpdateHud(data, ...args) {
     const normalized = normalizeHomeMonitorSensingFrame(data);
     const result = originalUpdateHud.call(this, normalized, ...args);
-    setHomeMonitorSensingClassLabel(this.container, normalized);
+    applyHomeMonitorSensingHud(this.container, homeMonitorSensingHudFromData(normalized));
     return result;
   };
 
@@ -2154,18 +2254,7 @@ function updateSensingFields(summary) {
   const sensing = document.getElementById('sensing');
   if (!sensing) return;
 
-  const present = hasPresence(summary);
-  const motion = String(summary.motion || '').toLowerCase();
-  const level = homeMonitorDisplayMotionLevel(motion);
-  const confidence = safeNumber(summary.confidence, 0);
-  const confidencePct = Math.max(0, Math.min(100, confidence <= 1 ? confidence * 100 : confidence));
-
-  setText('#sensingRssi', formatRssi(summary), sensing);
-  setText('#sensingSource', summary.source || 'esp32', sensing);
-  setText('#sensingNodeCount', String(summary.nodeCount || 0), sensing);
-  setText('#valConfidence', `${confidencePct.toFixed(0)}%`, sensing);
-  setWidth('#barConfidence', confidencePct, sensing);
-  setHomeMonitorSensingClassLabel(sensing, { ...summary, motion: level, presence: present });
+  applyHomeMonitorSensingHud(sensing, homeMonitorSensingHudFromSummary(summary));
 }
 
 function updatePoseFusionFields(summary) {
