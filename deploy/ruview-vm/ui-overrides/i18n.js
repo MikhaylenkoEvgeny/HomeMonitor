@@ -2,6 +2,8 @@
 // Keeps domain terms such as CSI, RSSI, API, WebSocket, LoRA, RVF, PCK, OKS,
 // FPS, WiFi DensePose, Pose Fusion, and Observatory in English.
 
+import { sensingService } from '../services/sensing.service.js';
+
 const translations = {
   en: {
     'nav.dashboard': 'Home Now',
@@ -682,11 +684,75 @@ let homeMonitorActiveGroup = null;
 let homeMonitorNavInitialized = false;
 let homeMonitorNavRenderKey = '';
 let homeMonitorNavObserver = null;
+let homeMonitorSensingDataUnsub = null;
 
 function safeNumber(value, fallback = null) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+
+function normalizeHomeMonitorSensingFrame(data) {
+  if (!data || typeof data !== 'object') return data;
+
+  const nodeFeatures = Array.isArray(data.node_features) ? data.node_features : [];
+  const featureWithClassification = nodeFeatures.find(node => node && node.classification);
+  if (!featureWithClassification) return data;
+
+  const classification = data.classification || {};
+  const nodeClassification = featureWithClassification.classification || {};
+  const globalConfidence = safeNumber(classification.confidence, 0);
+  const nodeConfidence = safeNumber(nodeClassification.confidence, 0);
+  const globalMotion = String(classification.motion_level || classification.motion || '').toLowerCase();
+  const nodeMotion = String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase();
+  const globalLooksEmpty = (
+    globalConfidence === 0 &&
+    classification.presence === false &&
+    ['absent', 'none', ''].includes(globalMotion)
+  );
+  const nodeLooksLive = (
+    nodeClassification.presence === true ||
+    nodeConfidence > 0 ||
+    nodeMotion.includes('present') ||
+    nodeMotion.includes('moving') ||
+    nodeMotion.includes('motion')
+  );
+
+  if (!globalLooksEmpty || !nodeLooksLive) return data;
+
+  const normalized = {
+    ...data,
+    classification: {
+      ...classification,
+      ...nodeClassification
+    },
+    _homemonitor_normalized: true
+  };
+
+  if (!normalized.classification.motion_level && normalized.classification.motion) {
+    normalized.classification.motion_level = normalized.classification.motion;
+  }
+
+  const rssi = pickFirst(featureWithClassification.rssi_dbm, data.features?.mean_rssi);
+  if (rssi !== undefined && rssi !== null) {
+    normalized.features = {
+      ...(data.features || {}),
+      mean_rssi: rssi
+    };
+  }
+
+  return normalized;
+}
+
+function installHomeMonitorSensingPatch() {
+  if (!sensingService || sensingService.__homeMonitorSensingPatch) return;
+  if (typeof sensingService._handleData !== 'function') return;
+
+  const originalHandleData = sensingService._handleData.bind(sensingService);
+  sensingService._handleData = data => originalHandleData(normalizeHomeMonitorSensingFrame(data));
+  sensingService.__homeMonitorSensingPatch = true;
+}
+
+installHomeMonitorSensingPatch();
 
 function formatFixed(value, digits = 1, suffix = '') {
   const number = safeNumber(value);
@@ -1770,6 +1836,8 @@ function updateNativeIndexFields(summary) {
   setText('#signalStrength', rssi);
   setText('#personCount', presenceCount);
   setText('#confidence', confidence);
+  document.querySelectorAll('.person-count').forEach(element => { element.textContent = presenceCount; });
+  document.querySelectorAll('.avg-confidence').forEach(element => { element.textContent = confidence === '-' ? '0%' : confidence; });
 
   const configValues = document.querySelectorAll('#hardware .config-value');
   if (configValues.length >= 4) {
@@ -1952,12 +2020,42 @@ async function refreshHomeMonitorLiveState() {
   updateHomeMonitorLivePanels(homeMonitorLastState);
 }
 
+function updateHomeMonitorFromSensingFrame(data) {
+  const latest = normalizeHomeMonitorSensingFrame(data);
+  const previous = homeMonitorLastState || {};
+  const summary = buildHomeMonitorSummary({
+    latest,
+    health: {
+      clients: previous.clients,
+      tick: previous.tick,
+      source: previous.source,
+      status: previous.status
+    },
+    status: {
+      source: previous.source || latest?.source,
+      status: previous.status
+    }
+  });
+
+  homeMonitorLastState = {
+    ...previous,
+    ...summary,
+    clients: summary.clients ?? previous.clients,
+    tick: summary.tick ?? previous.tick
+  };
+  updateHomeMonitorLivePanels(homeMonitorLastState);
+}
+
 function startHomeMonitorLiveOverlay() {
   if (homeMonitorLiveTimer) {
     if (homeMonitorLastState) updateHomeMonitorLivePanels(homeMonitorLastState);
     return;
   }
+  installHomeMonitorSensingPatch();
   injectHomeMonitorStyles();
+  if (!homeMonitorSensingDataUnsub && sensingService && typeof sensingService.onData === 'function') {
+    homeMonitorSensingDataUnsub = sensingService.onData(updateHomeMonitorFromSensingFrame);
+  }
   refreshHomeMonitorLiveState();
   homeMonitorLiveTimer = window.setInterval(refreshHomeMonitorLiveState, HOME_MONITOR_POLL_MS);
 
@@ -2103,6 +2201,10 @@ export class I18n {
     if (homeMonitorNavObserver) {
       homeMonitorNavObserver.disconnect();
       homeMonitorNavObserver = null;
+    }
+    if (homeMonitorSensingDataUnsub) {
+      homeMonitorSensingDataUnsub();
+      homeMonitorSensingDataUnsub = null;
     }
     homeMonitorNavInitialized = false;
     homeMonitorNavRenderKey = '';
