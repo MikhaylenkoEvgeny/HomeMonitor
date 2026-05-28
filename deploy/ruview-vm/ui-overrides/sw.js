@@ -1,6 +1,5 @@
 // HomeMonitor disables the upstream cache-first service worker so UI overlay
 // changes are visible immediately after reinstall.
-const CACHE_NAME = 'ruview-homemonitor-ru-v1';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -9,10 +8,10 @@ self.addEventListener('install', () => {
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.map(key => {
-        if (key !== CACHE_NAME) return caches.delete(key);
-        return Promise.resolve(false);
-      })))
+      .then(keys => Promise.all(keys
+        .filter(key => key.startsWith('ruview-'))
+        .map(key => caches.delete(key))))
       .then(() => self.clients.claim())
+      .then(() => self.registration.unregister())
   );
 });

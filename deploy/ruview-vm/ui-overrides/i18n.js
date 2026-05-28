@@ -2,7 +2,9 @@
 // Keeps domain terms such as CSI, RSSI, API, WebSocket, LoRA, RVF, PCK, OKS,
 // FPS, WiFi DensePose, Pose Fusion, and Observatory in English.
 
+import { DashboardTab } from '../components/DashboardTab.js';
 import { sensingService } from '../services/sensing.service.js';
+import { backendDetector } from '../utils/backend-detector.js';
 
 const translations = {
   en: {
@@ -677,18 +679,66 @@ function scheduleApply(i18n) {
 
 const HOME_MONITOR_STYLE_ID = 'homemonitor-live-overlay-styles';
 const HOME_MONITOR_POLL_MS = 3000;
+const HOME_MONITOR_PRESENCE_HOLD_MS = 7000;
+const HOME_MONITOR_DEMO_DATA_KEY = 'homemonitor-demo-data-enabled';
 
 let homeMonitorLiveTimer = null;
 let homeMonitorLastState = null;
+let homeMonitorLastPresenceAt = 0;
+let homeMonitorLastPresenceSummary = null;
 let homeMonitorActiveGroup = null;
 let homeMonitorNavInitialized = false;
 let homeMonitorNavRenderKey = '';
 let homeMonitorNavObserver = null;
 let homeMonitorSensingDataUnsub = null;
+let homeMonitorSettingsObserver = null;
+let homeMonitorDashboardPatched = false;
+let homeMonitorBackendPatched = false;
+let homeMonitorCachesCleared = false;
 
 function safeNumber(value, fallback = null) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readHomeMonitorStorage(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeHomeMonitorStorage(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // noop
+  }
+}
+
+function homeMonitorDemoDataEnabled() {
+  return readHomeMonitorStorage(HOME_MONITOR_DEMO_DATA_KEY) === 'true';
+}
+
+function setHomeMonitorDemoDataEnabled(enabled) {
+  writeHomeMonitorStorage(HOME_MONITOR_DEMO_DATA_KEY, enabled ? 'true' : 'false');
+  document.documentElement.classList.toggle('hm-demo-enabled', enabled);
+  document.documentElement.classList.toggle('hm-demo-disabled', !enabled);
+  document.dispatchEvent(new CustomEvent('homemonitor-demo-data-change', { detail: { enabled } }));
+}
+
+function isHomeMonitorDemoSource(source) {
+  return ['simulated', 'simulate', 'server-simulated', 'mock'].includes(String(source || '').toLowerCase());
+}
+
+function isHomeMonitorEsp32Source(source) {
+  return String(source || '').toLowerCase().startsWith('esp32');
+}
+
+function isHomeMonitorDemoFrame(data) {
+  if (!data || typeof data !== 'object') return false;
+  return data._simulated === true || isHomeMonitorDemoSource(data.source);
 }
 
 function normalizeHomeMonitorSensingFrame(data) {
@@ -706,7 +756,7 @@ function normalizeHomeMonitorSensingFrame(data) {
   const nodeMotion = String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase();
   const globalLooksEmpty = (
     globalConfidence === 0 &&
-    classification.presence === false &&
+    classification.presence !== true &&
     ['absent', 'none', ''].includes(globalMotion)
   );
   const nodeLooksLive = (
@@ -748,11 +798,74 @@ function installHomeMonitorSensingPatch() {
   if (typeof sensingService._handleData !== 'function') return;
 
   const originalHandleData = sensingService._handleData.bind(sensingService);
-  sensingService._handleData = data => originalHandleData(normalizeHomeMonitorSensingFrame(data));
+  const originalFallback = typeof sensingService._fallbackToSimulation === 'function'
+    ? sensingService._fallbackToSimulation.bind(sensingService)
+    : null;
+  const originalApplyServerSource = typeof sensingService._applyServerSource === 'function'
+    ? sensingService._applyServerSource.bind(sensingService)
+    : null;
+
+  sensingService._handleData = data => {
+    const normalized = normalizeHomeMonitorSensingFrame(data);
+    if (!homeMonitorDemoDataEnabled() && isHomeMonitorDemoFrame(normalized)) {
+      sensingService._lastMessage = null;
+      if (typeof sensingService._stopSimulation === 'function') sensingService._stopSimulation();
+      if (typeof sensingService._setDataSource === 'function') sensingService._setDataSource('reconnecting');
+      return;
+    }
+    originalHandleData(normalized);
+  };
+
+  if (originalFallback) {
+    sensingService._fallbackToSimulation = function patchedFallbackToSimulation() {
+      if (homeMonitorDemoDataEnabled()) return originalFallback();
+      if (typeof this._stopSimulation === 'function') this._stopSimulation();
+      if (typeof this._setState === 'function') this._setState('reconnecting');
+      if (typeof this._setDataSource === 'function') this._setDataSource('reconnecting');
+      if (!this._reconnectTimer && typeof this._connect === 'function') {
+        this._reconnectTimer = setTimeout(() => {
+          this._reconnectTimer = null;
+          this._reconnectAttempt = 0;
+          this._connect();
+        }, 16000);
+      }
+      return undefined;
+    };
+  }
+
+  if (originalApplyServerSource) {
+    sensingService._applyServerSource = function patchedApplyServerSource(rawSource) {
+      if (isHomeMonitorEsp32Source(rawSource)) {
+        this._serverSource = rawSource;
+        if (typeof this._setDataSource === 'function') this._setDataSource('live');
+        return;
+      }
+      if (!homeMonitorDemoDataEnabled() && isHomeMonitorDemoSource(rawSource)) {
+        this._serverSource = rawSource;
+        if (typeof this._setDataSource === 'function') this._setDataSource('reconnecting');
+        return;
+      }
+      return originalApplyServerSource(rawSource);
+    };
+  }
+
   sensingService.__homeMonitorSensingPatch = true;
 }
 
+function installHomeMonitorBackendPatch() {
+  if (!backendDetector || homeMonitorBackendPatched) return;
+  if (typeof backendDetector.shouldUseMockServer !== 'function') return;
+
+  const originalShouldUseMockServer = backendDetector.shouldUseMockServer.bind(backendDetector);
+  backendDetector.shouldUseMockServer = async function patchedShouldUseMockServer() {
+    if (!homeMonitorDemoDataEnabled()) return false;
+    return originalShouldUseMockServer();
+  };
+  homeMonitorBackendPatched = true;
+}
+
 installHomeMonitorSensingPatch();
+installHomeMonitorBackendPatch();
 
 function formatFixed(value, digits = 1, suffix = '') {
   const number = safeNumber(value);
@@ -785,8 +898,9 @@ function escapeHtml(value) {
 
 function classifyLiveMode(summary) {
   if (summary.error) return { label: 'Нет связи', className: 'hm-live-bad' };
-  if (summary.source === 'esp32' && summary.hasData) return { label: 'LIVE ESP32', className: 'hm-live-good' };
-  if (summary.source === 'esp32') return { label: 'Жду ESP32', className: 'hm-live-warn' };
+  if (summary.demoBlocked) return { label: 'Только live', className: 'hm-live-warn' };
+  if (isHomeMonitorEsp32Source(summary.source) && summary.hasData) return { label: 'LIVE ESP32', className: 'hm-live-good' };
+  if (isHomeMonitorEsp32Source(summary.source)) return { label: 'Жду ESP32', className: 'hm-live-warn' };
   if (summary.source === 'simulated') return { label: 'Симуляция', className: 'hm-live-warn' };
   return { label: 'Источник неясен', className: 'hm-live-warn' };
 }
@@ -1131,6 +1245,26 @@ function injectHomeMonitorStyles() {
       z-index: 30;
     }
 
+    #hm-demo-data-section .qs-toggle > span:first-child {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      line-height: 1.25;
+    }
+
+    .hm-settings-note {
+      color: #6b7680;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .hm-demo-disabled .sensing-source-simulated,
+    .hm-demo-disabled .sensing-source-server-sim,
+    .hm-demo-disabled .demo-source-sim,
+    .hm-demo-disabled .demo-source-offline {
+      filter: grayscale(1);
+    }
+
     @media (max-width: 900px) {
       .hm-grouped-nav {
         padding: 0 10px;
@@ -1205,17 +1339,43 @@ function buildHomeMonitorSummary(parts) {
   const vitals = latest.vital_signs || {};
   const source = pickFirst(latest.source, status.source, health.source, 'unknown');
   const hasNoDataStatus = String(latest.status || '').toLowerCase().includes('no data');
+  const demoBlocked = !homeMonitorDemoDataEnabled() && (
+    isHomeMonitorDemoSource(source) ||
+    isHomeMonitorDemoFrame(latest) ||
+    isHomeMonitorDemoSource(status.source) ||
+    isHomeMonitorDemoSource(health.source)
+  );
+  if (demoBlocked) {
+    return {
+      error: parts.error || null,
+      source: 'live-only',
+      status: 'demo blocked',
+      hasData: false,
+      hasRawCsi: false,
+      adapterMode: false,
+      demoBlocked: true,
+      nodeCount: 0,
+      nodeLabel: '-',
+      clients: pickFirst(health.clients, latest.clients),
+      tick: pickFirst(health.tick, latest.tick),
+      timestamp: pickFirst(latest.timestamp, firstNode.timestamp, health.timestamp),
+      updatedAt: new Date()
+    };
+  }
   const globalConfidence = safeNumber(classification.confidence, 0);
   const nodeConfidence = safeNumber(nodeClassification.confidence, 0);
   const globalLooksEmpty = (
     globalConfidence === 0 &&
-    classification.presence === false &&
+    classification.presence !== true &&
     ['absent', 'none', ''].includes(String(classification.motion_level || classification.motion || '').toLowerCase())
   );
   const useNodeClassification = globalLooksEmpty && (
     nodeClassification.presence === true ||
     nodeConfidence > 0 ||
-    String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase().includes('present')
+    String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase().includes('present') ||
+    String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase().includes('moving') ||
+    String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase().includes('motion') ||
+    String(nodeClassification.motion_level || nodeClassification.motion || '').toLowerCase().includes('active')
   );
   const effectiveClassification = useNodeClassification ? nodeClassification : classification;
   const hasRawCsi = nodes.some(node => {
@@ -1236,7 +1396,7 @@ function buildHomeMonitorSummary(parts) {
     status: pickFirst(latest.status, status.status, health.status, 'unknown'),
     hasData: !parts.error && !hasNoDataStatus && (nodes.length > 0 || nodeFeatures.length > 0 || Object.keys(vitals).length > 0),
     hasRawCsi,
-    adapterMode: source === 'esp32' && !hasRawCsi && !hasNoDataStatus,
+    adapterMode: isHomeMonitorEsp32Source(source) && !hasRawCsi && !hasNoDataStatus,
     nodeCount: nodeIds.length || nodes.length || nodeFeatures.length || 0,
     nodeLabel: nodeIds.length ? nodeIds.map(id => `node ${id}`).join(', ') : '-',
     rssi: pickFirst(firstNode.rssi_dbm, firstFeature.rssi_dbm, latest.features?.mean_rssi),
@@ -1254,8 +1414,9 @@ function buildHomeMonitorSummary(parts) {
 
 function statusText(summary) {
   if (summary.error) return 'API недоступен';
-  if (summary.source === 'esp32' && summary.hasData) return 'принимаем пакеты с ESP32';
-  if (summary.source === 'esp32') return 'ESP32 выбран, но новых пакетов пока нет';
+  if (summary.demoBlocked) return 'демо-данные отключены, ждем live ESP32';
+  if (isHomeMonitorEsp32Source(summary.source) && summary.hasData) return 'принимаем пакеты с ESP32';
+  if (isHomeMonitorEsp32Source(summary.source)) return 'ESP32 выбран, но новых пакетов пока нет';
   if (summary.source === 'simulated') return 'идет симуляция без железа';
   return `источник: ${summary.source}`;
 }
@@ -1273,6 +1434,35 @@ function hasPresence(summary) {
   const text = String(summary.presence || summary.motion || '').toLowerCase();
   if (!text) return false;
   return text.includes('present') || text.includes('motion') || text.includes('moving');
+}
+
+function stabilizeHomeMonitorPresence(summary) {
+  if (!summary || !isHomeMonitorEsp32Source(summary.source) || !summary.hasData) return summary;
+
+  const now = Date.now();
+  if (hasPresence(summary)) {
+    homeMonitorLastPresenceAt = now;
+    homeMonitorLastPresenceSummary = {
+      presence: summary.presence,
+      motion: summary.motion,
+      confidence: summary.confidence
+    };
+    return summary;
+  }
+
+  if (homeMonitorLastPresenceAt && now - homeMonitorLastPresenceAt <= HOME_MONITOR_PRESENCE_HOLD_MS) {
+    const previousConfidence = safeNumber(homeMonitorLastPresenceSummary?.confidence, 0);
+    const currentConfidence = safeNumber(summary.confidence, 0);
+    return {
+      ...summary,
+      presence: true,
+      motion: summary.motion || homeMonitorLastPresenceSummary?.motion || 'present_recent',
+      confidence: Math.max(previousConfidence, currentConfidence),
+      stabilizedPresence: true
+    };
+  }
+
+  return summary;
 }
 
 function formatPercent(value) {
@@ -1557,7 +1747,7 @@ const HOME_MONITOR_TAB_CONTEXTS = [
 ];
 
 function noteForContext(context, summary) {
-  return summary.source === 'esp32' && summary.hasData ? context.liveNote : context.fallbackNote;
+  return isHomeMonitorEsp32Source(summary.source) && summary.hasData ? context.liveNote : context.fallbackNote;
 }
 
 function getHomeMonitorItems() {
@@ -1586,7 +1776,7 @@ function getHomeMonitorActiveGroupId() {
 
 function badgeForPolicy(policy, summary) {
   const mode = classifyLiveMode(summary);
-  const live = summary.source === 'esp32' && summary.hasData;
+  const live = isHomeMonitorEsp32Source(summary.source) && summary.hasData;
 
   if (policy === 'live') return { text: live ? 'LIVE' : 'CHECK', className: mode.className };
   if (policy === 'esp32') {
@@ -1827,7 +2017,7 @@ function updateNativeIndexFields(summary) {
   const confidence = summary.confidence === undefined || summary.confidence === null ? '-' : formatPercent(summary.confidence);
   const rssi = formatRssi(summary);
 
-  updateStatusCard('hardware', summary.source === 'esp32' && summary.hasData ? 'LIVE' : 'WAITING', summary.nodeCount ? `${summary.nodeCount} ESP32 node(s)` : 'ESP32 packets not visible');
+  updateStatusCard('hardware', isHomeMonitorEsp32Source(summary.source) && summary.hasData ? 'LIVE' : 'WAITING', summary.nodeCount ? `${summary.nodeCount} ESP32 node(s)` : 'ESP32 packets not visible');
   updateStatusCard('datasource', mode.label, statusText(summary));
   updateStatusCard('inference', summary.hasRawCsi ? 'RAW CSI' : 'FEATURES', summary.hasRawCsi ? 'raw CSI arrays visible' : 'feature_state adapter mode');
   updateStatusCard('streaming', summary.error ? 'OFFLINE' : 'OK', summary.clients !== undefined && summary.clients !== null ? `${summary.clients} client(s)` : 'API polling');
@@ -1841,7 +2031,7 @@ function updateNativeIndexFields(summary) {
 
   const configValues = document.querySelectorAll('#hardware .config-value');
   if (configValues.length >= 4) {
-    configValues[0].textContent = summary.source === 'esp32' ? '2.4 GHz WiFi' : 'ожидание ESP32';
+    configValues[0].textContent = isHomeMonitorEsp32Source(summary.source) ? '2.4 GHz WiFi' : 'ожидание ESP32';
     configValues[1].textContent = summary.hasRawCsi ? 'raw CSI' : 'feature_state';
     configValues[2].textContent = summary.tick === undefined || summary.tick === null ? 'live poll' : `tick ${summary.tick}`;
     configValues[3].textContent = summary.nodeCount ? `${summary.nodeCount} node` : '-';
@@ -1852,6 +2042,35 @@ function updateNativeIndexFields(summary) {
     csiValues[0].textContent = rssi;
     csiValues[1].textContent = summary.hasRawCsi ? 'raw' : 'adapter';
   }
+}
+
+function homeMonitorOwnsDashboardStats() {
+  return !homeMonitorDemoDataEnabled() || (isHomeMonitorEsp32Source(homeMonitorLastState?.source) && homeMonitorLastState?.hasData);
+}
+
+function installHomeMonitorDashboardPatch() {
+  if (homeMonitorDashboardPatched || !DashboardTab?.prototype) return;
+
+  const originalUpdateLiveStats = DashboardTab.prototype.updateLiveStats;
+  const originalUpdatePoseStats = DashboardTab.prototype.updatePoseStats;
+
+  DashboardTab.prototype.updateLiveStats = async function patchedUpdateLiveStats(...args) {
+    if (homeMonitorOwnsDashboardStats()) {
+      if (homeMonitorLastState) updateNativeIndexFields(homeMonitorLastState);
+      return;
+    }
+    return originalUpdateLiveStats.apply(this, args);
+  };
+
+  DashboardTab.prototype.updatePoseStats = function patchedUpdatePoseStats(...args) {
+    if (homeMonitorOwnsDashboardStats()) {
+      if (homeMonitorLastState) updateNativeIndexFields(homeMonitorLastState);
+      return;
+    }
+    return originalUpdatePoseStats.apply(this, args);
+  };
+
+  homeMonitorDashboardPatched = true;
 }
 
 function updateSensingFields(summary) {
@@ -1938,7 +2157,7 @@ function updateStandalonePanels(summary) {
       'Pose Fusion и ваши данные',
       'Страница может использовать live CSI/RSSI как один из источников, но камера и fusion pipeline остаются отдельным демо-контуром RuView.',
       summary,
-      summary.source === 'esp32' && summary.hasData
+      isHomeMonitorEsp32Source(summary.source) && summary.hasData
         ? 'RSSI и CSI-индикаторы обновлены из ESP32. Полная dual-modal fusion оценка станет честной после подключения камеры, raw CSI и модели.'
         : 'Сейчас Pose Fusion не видит домашний ESP32-поток и работает как демо.'
     );
@@ -1951,7 +2170,7 @@ function updateStandalonePanels(summary) {
       'Observatory: live-контекст',
       '3D-сцена Observatory остается визуальной песочницей, но боковые live-значения можно сверять с этой HomeMonitor панелью.',
       summary,
-      summary.source === 'esp32' && summary.hasData
+      isHomeMonitorEsp32Source(summary.source) && summary.hasData
         ? 'Vital signs, RSSI, presence и motion обновляются из ESP32. Сценарии вроде Multi-person и Fall Detect ниже остаются демонстрационными без отдельной модели.'
         : 'Observatory сейчас показывает демо-сценарии RuView, а не домашний ESP32.'
     );
@@ -1961,7 +2180,7 @@ function updateStandalonePanels(summary) {
 function updateTabBadges(summary) {
   const badgeMode = classifyLiveMode(summary);
   const badgeClass = badgeMode.className;
-  const live = summary.source === 'esp32' && summary.hasData;
+  const live = isHomeMonitorEsp32Source(summary.source) && summary.hasData;
   const refClass = live ? 'hm-live-warn' : badgeClass;
 
   upsertTabBadge('dashboard', live ? 'LIVE' : 'CHECK', badgeClass);
@@ -2016,14 +2235,14 @@ async function refreshHomeMonitorLiveState() {
     parts.error = error;
   }
 
-  homeMonitorLastState = buildHomeMonitorSummary(parts);
+  homeMonitorLastState = stabilizeHomeMonitorPresence(buildHomeMonitorSummary(parts));
   updateHomeMonitorLivePanels(homeMonitorLastState);
 }
 
 function updateHomeMonitorFromSensingFrame(data) {
   const latest = normalizeHomeMonitorSensingFrame(data);
   const previous = homeMonitorLastState || {};
-  const summary = buildHomeMonitorSummary({
+  const summary = stabilizeHomeMonitorPresence(buildHomeMonitorSummary({
     latest,
     health: {
       clients: previous.clients,
@@ -2032,10 +2251,10 @@ function updateHomeMonitorFromSensingFrame(data) {
       status: previous.status
     },
     status: {
-      source: previous.source || latest?.source,
+      source: latest?.source || previous.source,
       status: previous.status
     }
-  });
+  }));
 
   homeMonitorLastState = {
     ...previous,
@@ -2046,13 +2265,77 @@ function updateHomeMonitorFromSensingFrame(data) {
   updateHomeMonitorLivePanels(homeMonitorLastState);
 }
 
+function ensureHomeMonitorSettingsControl() {
+  const body = document.querySelector('.quick-settings-panel .qs-body');
+  if (!body || document.getElementById('hm-demo-data-toggle')) return;
+
+  const section = document.createElement('div');
+  section.className = 'qs-section';
+  section.id = 'hm-demo-data-section';
+  section.innerHTML = `
+    <div class="qs-section-title">HomeMonitor</div>
+    <label class="qs-toggle">
+      <span>
+        <span>Демо-данные</span>
+        <span class="hm-settings-note">Разрешать mock/simulation кадры, когда нет live ESP32</span>
+      </span>
+      <input type="checkbox" id="hm-demo-data-toggle">
+      <span class="qs-switch"></span>
+    </label>
+  `;
+  body.insertBefore(section, body.querySelector('.qs-section:nth-child(3)') || null);
+
+  const input = section.querySelector('#hm-demo-data-toggle');
+  input.checked = homeMonitorDemoDataEnabled();
+  input.addEventListener('change', () => {
+    setHomeMonitorDemoDataEnabled(input.checked);
+    if (!input.checked) {
+      sensingService._lastMessage = null;
+      if (typeof sensingService._stopSimulation === 'function') sensingService._stopSimulation();
+      if (typeof sensingService._setDataSource === 'function') sensingService._setDataSource('reconnecting');
+      if (homeMonitorLastState) updateHomeMonitorLivePanels(homeMonitorLastState);
+    } else if (typeof sensingService.start === 'function') {
+      sensingService.start();
+    }
+  });
+}
+
+function observeHomeMonitorSettings() {
+  ensureHomeMonitorSettingsControl();
+  if (homeMonitorSettingsObserver) return;
+  homeMonitorSettingsObserver = new MutationObserver(() => ensureHomeMonitorSettingsControl());
+  homeMonitorSettingsObserver.observe(document.documentElement, { subtree: true, childList: true });
+}
+
+function clearHomeMonitorStaticCaches() {
+  if (homeMonitorCachesCleared || typeof navigator === 'undefined') return;
+  homeMonitorCachesCleared = true;
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations()
+      .then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
+      .catch(() => {});
+  }
+
+  if (typeof caches !== 'undefined') {
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(key => key.startsWith('ruview-')).map(key => caches.delete(key))))
+      .catch(() => {});
+  }
+}
+
 function startHomeMonitorLiveOverlay() {
   if (homeMonitorLiveTimer) {
     if (homeMonitorLastState) updateHomeMonitorLivePanels(homeMonitorLastState);
     return;
   }
   installHomeMonitorSensingPatch();
+  installHomeMonitorBackendPatch();
+  installHomeMonitorDashboardPatch();
   injectHomeMonitorStyles();
+  setHomeMonitorDemoDataEnabled(homeMonitorDemoDataEnabled());
+  observeHomeMonitorSettings();
+  clearHomeMonitorStaticCaches();
   if (!homeMonitorSensingDataUnsub && sensingService && typeof sensingService.onData === 'function') {
     homeMonitorSensingDataUnsub = sensingService.onData(updateHomeMonitorFromSensingFrame);
   }
@@ -2205,6 +2488,10 @@ export class I18n {
     if (homeMonitorSensingDataUnsub) {
       homeMonitorSensingDataUnsub();
       homeMonitorSensingDataUnsub = null;
+    }
+    if (homeMonitorSettingsObserver) {
+      homeMonitorSettingsObserver.disconnect();
+      homeMonitorSettingsObserver = null;
     }
     homeMonitorNavInitialized = false;
     homeMonitorNavRenderKey = '';
