@@ -101,6 +101,14 @@ prepare_ruview_ui() {
   inject_i18n_script "ui/viz.html"
 }
 
+prepare_udp_adapter() {
+  echo "Preparing ESP32 UDP adapter..."
+
+  mkdir -p adapter
+  download_overlay_file "deploy/ruview-vm/udp-adapter.py" "adapter/udp-adapter.py"
+  chmod 0644 "adapter/udp-adapter.py"
+}
+
 install_docker
 
 mkdir -p "${INSTALL_DIR}/data/models" "${INSTALL_DIR}/data/state" "${INSTALL_DIR}/data/recordings"
@@ -189,11 +197,27 @@ services:
     expose:
       - "3000"
       - "3001"
-    ports:
-      - "${ESP32_UDP_PORT:-5005}:5005/udp"
+      - "5005/udp"
     volumes:
       - ./ui:/app/ui:ro
       - ./data:/app/data
+
+  udp-adapter:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    command:
+      - python
+      - /app/udp-adapter.py
+      - --listen
+      - 0.0.0.0:5005
+      - --forward
+      - ruview:5005
+    ports:
+      - "${ESP32_UDP_PORT:-5005}:5005/udp"
+    volumes:
+      - ./adapter/udp-adapter.py:/app/udp-adapter.py:ro
+    depends_on:
+      - ruview
 
 volumes:
   caddy_data:
@@ -203,6 +227,7 @@ EOF_COMPOSE
 echo "Pulling RuView image..."
 docker compose pull
 prepare_ruview_ui
+prepare_udp_adapter
 docker compose up -d
 
 if command -v ufw >/dev/null 2>&1; then
@@ -230,6 +255,7 @@ Local files:
 Commands:
   cd ${INSTALL_DIR} && docker compose ps
   cd ${INSTALL_DIR} && docker compose logs -f ruview
+  cd ${INSTALL_DIR} && docker compose logs -f udp-adapter
   cd ${INSTALL_DIR} && docker compose pull && docker compose up -d
 
 CSI source:

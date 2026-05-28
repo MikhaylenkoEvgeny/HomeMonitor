@@ -26,6 +26,9 @@ The installer:
 - creates `/opt/homemonitor-ruview`;
 - starts Caddy on public `:80`;
 - starts `ruvnet/wifi-densepose:latest` with simulated CSI data;
+- starts a small UDP adapter on public `5005/udp` that forwards raw CSI and
+  translates ESP32 ADR-081 `feature_state` packets into RuView-compatible edge
+  vitals updates;
 - copies the native RuView UI from the Docker image and applies the HomeMonitor Russian UI overlay;
 - publishes ESP32 UDP `5005/udp` for later hardware;
 - persists models, state, and CSI recordings under `/opt/homemonitor-ruview/data`;
@@ -67,3 +70,23 @@ Open these inbound rules in Yandex Cloud:
 - UDP `5005` when ESP32 nodes are ready to stream CSI to the VM.
 
 No domain is required for the first version.
+
+## ESP32 packet compatibility
+
+Recent RuView ESP32 firmware sends ADR-081 `feature_state` packets as the
+default low-bandwidth stream. Some official Docker UI builds still refresh live
+state from ADR-018 raw CSI or ADR-039 vitals only. The bundled `udp-adapter`
+keeps both paths working:
+
+- ADR-018 raw CSI and existing vitals packets are forwarded unchanged;
+- ADR-081 `feature_state` is converted to a minimal ADR-039 vitals packet so
+  `/api/v1/sensing/latest` and the native UI update even when raw CSI yield is
+  low on a quiet network.
+
+Useful diagnostics on the VM:
+
+```bash
+cd /opt/homemonitor-ruview
+sudo docker compose logs -f udp-adapter
+sudo docker compose logs -f ruview
+```
