@@ -872,6 +872,62 @@ function injectHomeMonitorStyles() {
       line-height: 1.4;
     }
 
+    .hm-standalone-panel {
+      position: relative;
+      z-index: 10;
+      margin: 12px 16px;
+      max-width: none;
+    }
+
+    .hm-standalone-panel .hm-live-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .hm-pose-panel,
+    .hm-observatory-panel {
+      border-color: rgba(91, 213, 220, 0.28);
+      background: rgba(9, 23, 28, 0.94);
+      color: #eaf7f8;
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+    }
+
+    .hm-pose-panel .hm-live-title,
+    .hm-observatory-panel .hm-live-title,
+    .hm-pose-panel .hm-live-metric strong,
+    .hm-observatory-panel .hm-live-metric strong {
+      color: #eefbfb;
+    }
+
+    .hm-pose-panel .hm-live-subtitle,
+    .hm-observatory-panel .hm-live-subtitle,
+    .hm-pose-panel .hm-live-metric small,
+    .hm-observatory-panel .hm-live-metric small {
+      color: #b7cdd1;
+    }
+
+    .hm-pose-panel .hm-live-metric,
+    .hm-observatory-panel .hm-live-metric {
+      border-color: rgba(91, 213, 220, 0.2);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .hm-pose-panel .hm-live-note,
+    .hm-observatory-panel .hm-live-note {
+      background: rgba(38, 139, 154, 0.18);
+      color: #d6e9ec;
+    }
+
+    .hm-observatory-panel {
+      position: fixed;
+      left: 16px;
+      bottom: 74px;
+      width: min(470px, calc(100vw - 32px));
+      max-height: 44vh;
+      overflow: auto;
+      margin: 0;
+      z-index: 30;
+    }
+
     @media (max-width: 900px) {
       .hm-live-head {
         flex-direction: column;
@@ -890,6 +946,14 @@ function injectHomeMonitorStyles() {
 
       .hm-live-grid {
         grid-template-columns: 1fr;
+      }
+
+      .hm-observatory-panel {
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: 58px;
+        width: auto;
       }
     }
   `;
@@ -967,6 +1031,34 @@ function boolText(value) {
   return '-';
 }
 
+function hasPresence(summary) {
+  if (summary.presence === true) return true;
+  if (summary.presence === false) return false;
+  const text = String(summary.presence || summary.motion || '').toLowerCase();
+  if (!text) return false;
+  return text.includes('present') || text.includes('motion') || text.includes('moving');
+}
+
+function formatPercent(value) {
+  const number = safeNumber(value);
+  if (number === null) return '-';
+  const percent = number <= 1 ? number * 100 : number;
+  return `${percent.toFixed(0)}%`;
+}
+
+function formatRssi(summary) {
+  return summary.rssi === undefined || summary.rssi === null ? '-' : `${formatFixed(summary.rssi, 0)} dBm`;
+}
+
+function rssiQuality(summary) {
+  const rssi = safeNumber(summary.rssi);
+  if (rssi === null) return { label: '-', percent: 0 };
+  if (rssi >= -55) return { label: 'хороший', percent: 92 };
+  if (rssi >= -67) return { label: 'нормальный', percent: 72 };
+  if (rssi >= -80) return { label: 'слабый', percent: 45 };
+  return { label: 'плохой', percent: 20 };
+}
+
 function renderMetric(label, value, hint = '') {
   return `
     <div class="hm-live-metric">
@@ -982,7 +1074,7 @@ function renderHomeMonitorPanel(panel, title, subtitle, summary, note) {
   const rawText = summary.hasRawCsi ? 'raw CSI есть' : 'raw CSI нет';
   const adapterText = summary.adapterMode ? 'feature_state через adapter' : rawText;
   const lastSeen = formatTime(summary.timestamp);
-  const rssi = summary.rssi === undefined || summary.rssi === null ? '-' : `${formatFixed(summary.rssi, 0)} dBm`;
+  const rssi = formatRssi(summary);
   const motion = boolText(summary.motion);
   const presence = boolText(summary.presence);
   const respiration = summary.respiration === undefined || summary.respiration === null ? '-' : `${formatFixed(summary.respiration, 1)} bpm`;
@@ -1042,6 +1134,86 @@ function ensureHardwareDisclaimer(hardwareHost) {
   hardwareHost.insertBefore(disclaimer, grid);
 }
 
+const HOME_MONITOR_TAB_CONTEXTS = [
+  {
+    id: 'dashboard',
+    panelId: 'hm-live-dashboard-panel',
+    beforeSelector: '.live-status-panel',
+    compact: true,
+    title: 'HomeMonitor live',
+    subtitle: 'Короткая сводка по реальному источнику данных, который сейчас кормит облачный интерфейс.',
+    liveNote: 'Панель получает live данные от ESP32 через UDP adapter на ВМ. Карточки ниже обновляются родным RuView API, но эта сводка является контрольной.',
+    fallbackNote: 'Пока работает не железо, а встроенная симуляция RuView или fallback браузера.'
+  },
+  {
+    id: 'hardware',
+    panelId: 'hm-live-hardware-panel',
+    beforeSelector: '.hardware-grid',
+    title: 'Реальное оборудование HomeMonitor',
+    subtitle: 'Эта панель показывает то, что действительно приходит на вашу облачную ВМ от ESP32.',
+    liveNote: 'Да, устройство подключено к системе. Стандартный блок Hardware ниже оставлен как лабораторная визуализация RuView, а не паспорт вашей платы.',
+    fallbackNote: 'Реальное ESP32 сейчас не видно. Ниже остается демо-конфигурация RuView.'
+  },
+  {
+    id: 'demo',
+    panelId: 'hm-live-demo-panel',
+    beforeSelector: '.demo-controls, #demo-source-banner',
+    title: 'Live Demo: что здесь реально',
+    subtitle: 'Этот экран теперь получает live RSSI, presence, motion и confidence из HomeMonitor API.',
+    liveNote: 'Числа в панели и базовые счетчики берутся из вашей ESP32. Визуальный скелет остается демо/оценкой RuView, пока нет стабильного raw CSI и обученной pose-модели.',
+    fallbackNote: 'Live Demo сейчас работает как демонстрация RuView без домашнего ESP32-потока.'
+  },
+  {
+    id: 'architecture',
+    panelId: 'hm-live-architecture-panel',
+    beforeSelector: '.architecture-flow',
+    title: 'Архитектура именно вашей установки',
+    subtitle: 'ESP32-S3 дома отправляет UDP на облачную ВМ, adapter переводит поток в формат, который понимает RuView UI.',
+    liveNote: 'Активная цепочка сейчас: ESP32-S3 -> UDP 5005 -> HomeMonitor adapter -> RuView API -> web UI. Блоки DensePose-RCNN и полноценный Pose Fusion пока являются целевой архитектурой, не текущим inference.',
+    fallbackNote: 'Архитектура показана как справочная схема RuView. Реальная домашняя цепочка станет активной после появления ESP32-пакетов.'
+  },
+  {
+    id: 'performance',
+    panelId: 'hm-live-performance-panel',
+    beforeSelector: '.performance-chart',
+    title: 'Метрики вашей системы',
+    subtitle: 'Пока доступны эксплуатационные метрики live-потока: RSSI, presence/motion, vital signs и свежесть пакетов.',
+    liveNote: 'Графики AP/PCK ниже - исследовательские ориентиры RuView, не измеренная точность у вас дома. Для домашней точности нужны размеченные записи и отдельная валидация.',
+    fallbackNote: 'Ниже справочные показатели RuView. Домашние performance-метрики появятся после стабильного потока с ESP32.'
+  },
+  {
+    id: 'applications',
+    panelId: 'hm-live-applications-panel',
+    beforeSelector: '.applications-grid',
+    title: 'Что уже применимо дома',
+    subtitle: 'Этот раздел помечает сценарии по текущим возможностям вашего подключения, а не по маркетинговому максимуму RuView.',
+    liveNote: 'С одним ESP32 уже можно экспериментировать с presence, грубым motion и vital signs. Fall detection, multi-person и limb-level tracking потребуют больше датчиков, raw CSI и обучения.',
+    fallbackNote: 'Сценарии ниже пока справочные. Для домашних сценариев нужен live ESP32-поток.'
+  },
+  {
+    id: 'sensing',
+    panelId: 'hm-live-sensing-panel',
+    beforeSelector: '#sensingSourceBanner, .sensing-header',
+    title: 'Актуальность вкладки Sensing',
+    subtitle: 'Sensing читает тот же live endpoint /api/v1/sensing/latest, который обновляется через наш ESP32 UDP adapter.',
+    liveNote: 'Да, вкладка Sensing сейчас показывает ваши live ESP32-derived данные. Важная оговорка: при режиме feature_state видны агрегаты presence/motion/vitals, а не полноценные raw CSI массивы для красивой dense pose реконструкции.',
+    fallbackNote: 'Сейчас Sensing показывает симуляцию или fallback, а не домашнее железо.'
+  },
+  {
+    id: 'training',
+    panelId: 'hm-live-training-panel',
+    beforeSelector: '#training-container',
+    title: 'Training: готовность к обучению',
+    subtitle: 'Training нужен для своей pose-модели под планировку дома, но ему нужны записи raw CSI и синхронная разметка.',
+    liveNote: 'ESP32 виден, но текущий feature_state-поток годится для мониторинга, а не для полноценного обучения pose-модели. Для Training надо включить запись raw CSI, добавить датчики и собрать датасет.',
+    fallbackNote: 'Training пока не готов к работе, потому нет live ESP32/raw CSI датасета.'
+  }
+];
+
+function noteForContext(context, summary) {
+  return summary.source === 'esp32' && summary.hasData ? context.liveNote : context.fallbackNote;
+}
+
 function upsertTabBadge(tabName, text, className) {
   const tab = document.querySelector(`.nav-tab[data-tab="${tabName}"], [data-tab="${tabName}"]`);
   if (!tab) return;
@@ -1055,58 +1227,183 @@ function upsertTabBadge(tabName, text, className) {
   badge.className = `hm-tab-badge ${className || ''}`.trim();
 }
 
+function upsertNavLinkBadge(hrefPart, text, className) {
+  const tab = document.querySelector(`.nav-tab[href*="${hrefPart}"]`);
+  if (!tab) return;
+  let badge = tab.querySelector('.hm-tab-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'hm-tab-badge';
+    tab.appendChild(badge);
+  }
+  badge.textContent = text;
+  badge.className = `hm-tab-badge ${className || ''}`.trim();
+}
+
+function setText(selector, value, root = document) {
+  const element = root.querySelector(selector);
+  if (element) element.textContent = value;
+}
+
+function setWidth(selector, value, root = document) {
+  const element = root.querySelector(selector);
+  if (element) element.style.width = `${Math.max(0, Math.min(100, value))}%`;
+}
+
+function updateStatusCard(component, state, message) {
+  const card = document.querySelector(`.component-status[data-component="${component}"]`);
+  if (!card) return;
+  setText('.status-text', state, card);
+  setText('.status-message', message, card);
+}
+
+function updateNativeIndexFields(summary) {
+  const mode = classifyLiveMode(summary);
+  const presenceCount = hasPresence(summary) ? '1' : '0';
+  const confidence = summary.confidence === undefined || summary.confidence === null ? '-' : formatPercent(summary.confidence);
+  const rssi = formatRssi(summary);
+
+  updateStatusCard('hardware', summary.source === 'esp32' && summary.hasData ? 'LIVE' : 'WAITING', summary.nodeCount ? `${summary.nodeCount} ESP32 node(s)` : 'ESP32 packets not visible');
+  updateStatusCard('datasource', mode.label, statusText(summary));
+  updateStatusCard('inference', summary.hasRawCsi ? 'RAW CSI' : 'FEATURES', summary.hasRawCsi ? 'raw CSI arrays visible' : 'feature_state adapter mode');
+  updateStatusCard('streaming', summary.error ? 'OFFLINE' : 'OK', summary.clients !== undefined && summary.clients !== null ? `${summary.clients} client(s)` : 'API polling');
+
+  setText('#demoStatus', mode.label);
+  setText('#signalStrength', rssi);
+  setText('#personCount', presenceCount);
+  setText('#confidence', confidence);
+
+  const configValues = document.querySelectorAll('#hardware .config-value');
+  if (configValues.length >= 4) {
+    configValues[0].textContent = summary.source === 'esp32' ? '2.4 GHz WiFi' : 'ожидание ESP32';
+    configValues[1].textContent = summary.hasRawCsi ? 'raw CSI' : 'feature_state';
+    configValues[2].textContent = summary.tick === undefined || summary.tick === null ? 'live poll' : `tick ${summary.tick}`;
+    configValues[3].textContent = summary.nodeCount ? `${summary.nodeCount} node` : '-';
+  }
+
+  const csiValues = document.querySelectorAll('#hardware .csi-value');
+  if (csiValues.length >= 2) {
+    csiValues[0].textContent = rssi;
+    csiValues[1].textContent = summary.hasRawCsi ? 'raw' : 'adapter';
+  }
+}
+
+function updatePoseFusionFields(summary) {
+  if (!document.getElementById('mode-select')) return;
+  const mode = classifyLiveMode(summary);
+  const quality = rssiQuality(summary);
+  const confidence = summary.confidence === undefined || summary.confidence === null ? 0 : safeNumber(summary.confidence, 0);
+  const confidencePercent = confidence <= 1 ? confidence * 100 : confidence;
+
+  setText('#status-label', mode.label);
+  setText('#rssi-value', formatRssi(summary));
+  setText('#rssi-quality', quality.label);
+  setWidth('#rssi-bar', quality.percent);
+  setText('#csi-bar-val', summary.hasRawCsi ? '100%' : summary.adapterMode ? '35%' : '0%');
+  setWidth('#csi-bar', summary.hasRawCsi ? 100 : summary.adapterMode ? 35 : 0);
+  setText('#fused-bar-val', `${Math.max(0, Math.min(100, confidencePercent)).toFixed(0)}%`);
+  setWidth('#fused-bar', confidencePercent);
+}
+
+function updateObservatoryFields(summary) {
+  if (!document.getElementById('observatory-canvas')) return;
+  const mode = classifyLiveMode(summary);
+  const confidence = summary.confidence === undefined || summary.confidence === null ? '-' : formatPercent(summary.confidence);
+  const present = hasPresence(summary);
+
+  setText('#data-source-label', mode.label);
+  setText('#hr-value', summary.heartRate === undefined || summary.heartRate === null ? '--' : formatFixed(summary.heartRate, 0));
+  setText('#br-value', summary.respiration === undefined || summary.respiration === null ? '--' : formatFixed(summary.respiration, 0));
+  setText('#conf-value', confidence === '-' ? '--' : confidence.replace('%', ''));
+  setText('#rssi-value', formatRssi(summary));
+  setText('#motion-value', boolText(summary.motion));
+  setText('#persons-value', present ? '1' : '0');
+  setText('#presence-label', present ? 'PRESENT' : 'ABSENT');
+
+  const presence = document.getElementById('presence-indicator');
+  if (presence) {
+    presence.classList.toggle('presence--present', present);
+    presence.classList.toggle('presence--absent', !present);
+  }
+}
+
+function ensureStandalonePanel(id, className, beforeSelector = null) {
+  let panel = document.getElementById(id);
+  if (panel) return panel;
+
+  panel = document.createElement('section');
+  panel.id = id;
+  panel.className = `hm-live-panel hm-standalone-panel ${className || ''}`.trim();
+
+  const before = beforeSelector ? document.querySelector(beforeSelector) : null;
+  if (before && before.parentNode) before.parentNode.insertBefore(panel, before);
+  else document.body.appendChild(panel);
+  return panel;
+}
+
+function updateStandalonePanels(summary) {
+  if (document.getElementById('mode-select')) {
+    const panel = ensureStandalonePanel('hm-pose-fusion-live-panel', 'hm-pose-panel', '.main-grid');
+    renderHomeMonitorPanel(
+      panel,
+      'Pose Fusion и ваши данные',
+      'Страница может использовать live CSI/RSSI как один из источников, но камера и fusion pipeline остаются отдельным демо-контуром RuView.',
+      summary,
+      summary.source === 'esp32' && summary.hasData
+        ? 'RSSI и CSI-индикаторы обновлены из ESP32. Полная dual-modal fusion оценка станет честной после подключения камеры, raw CSI и модели.'
+        : 'Сейчас Pose Fusion не видит домашний ESP32-поток и работает как демо.'
+    );
+  }
+
+  if (document.getElementById('observatory-canvas')) {
+    const panel = ensureStandalonePanel('hm-observatory-live-panel', 'hm-observatory-panel');
+    renderHomeMonitorPanel(
+      panel,
+      'Observatory: live-контекст',
+      '3D-сцена Observatory остается визуальной песочницей, но боковые live-значения можно сверять с этой HomeMonitor панелью.',
+      summary,
+      summary.source === 'esp32' && summary.hasData
+        ? 'Vital signs, RSSI, presence и motion обновляются из ESP32. Сценарии вроде Multi-person и Fall Detect ниже остаются демонстрационными без отдельной модели.'
+        : 'Observatory сейчас показывает демо-сценарии RuView, а не домашний ESP32.'
+    );
+  }
+}
+
+function updateTabBadges(summary) {
+  const badgeMode = classifyLiveMode(summary);
+  const badgeClass = badgeMode.className;
+  const live = summary.source === 'esp32' && summary.hasData;
+  const refClass = live ? 'hm-live-warn' : badgeClass;
+
+  upsertTabBadge('dashboard', live ? 'LIVE' : 'CHECK', badgeClass);
+  upsertTabBadge('hardware', summary.nodeCount ? `${summary.nodeCount} ESP32` : 'DEMO', badgeClass);
+  upsertTabBadge('demo', live ? 'LIVE' : 'DEMO', badgeClass);
+  upsertTabBadge('architecture', live ? 'CURRENT' : 'REF', refClass);
+  upsertTabBadge('performance', live ? 'LIVE METRICS' : 'REF', refClass);
+  upsertTabBadge('applications', live ? 'MVP' : 'REF', refClass);
+  upsertTabBadge('sensing', live ? 'LIVE' : 'CHECK', badgeClass);
+  upsertTabBadge('training', summary.hasRawCsi ? 'READY' : 'NOT READY', summary.hasRawCsi ? badgeClass : 'hm-live-warn');
+  upsertNavLinkBadge('pose-fusion', live ? 'PARTIAL' : 'DEMO', refClass);
+  upsertNavLinkBadge('observatory', live ? 'LIVE VALUES' : 'DEMO', refClass);
+}
+
 function updateHomeMonitorLivePanels(summary) {
   injectHomeMonitorStyles();
 
-  const dashboard = document.getElementById('dashboard');
-  const hardware = document.getElementById('hardware');
-  const sensing = document.getElementById('sensing');
-
-  const dashboardPanel = ensurePanel(dashboard, 'hm-live-dashboard-panel', '.status-grid, .live-status-panel');
-  if (dashboardPanel) {
-    dashboardPanel.classList.add('hm-live-compact');
-    renderHomeMonitorPanel(
-      dashboardPanel,
-      'HomeMonitor live',
-      'Короткая сводка по реальному источнику данных, который сейчас кормит облачный интерфейс.',
-      summary,
-      summary.source === 'esp32'
-        ? 'Панель получает live данные от ESP32 через UDP adapter на ВМ.'
-        : 'Пока работает не железо, а встроенная симуляция RuView.'
-    );
+  for (const context of HOME_MONITOR_TAB_CONTEXTS) {
+    const host = document.getElementById(context.id);
+    const panel = ensurePanel(host, context.panelId, context.beforeSelector);
+    if (!panel) continue;
+    panel.classList.toggle('hm-live-compact', Boolean(context.compact));
+    renderHomeMonitorPanel(panel, context.title, context.subtitle, summary, noteForContext(context, summary));
   }
 
-  const hardwarePanel = ensurePanel(hardware, 'hm-live-hardware-panel', '.hardware-grid');
-  if (hardwarePanel) {
-    renderHomeMonitorPanel(
-      hardwarePanel,
-      'Реальное оборудование HomeMonitor',
-      'Эта панель показывает то, что действительно приходит на вашу облачную ВМ от ESP32.',
-      summary,
-      summary.source === 'esp32'
-        ? 'Да, устройство подключено к системе. Стандартный блок Hardware ниже оставлен как лабораторная визуализация RuView, а не паспорт вашей платы.'
-        : 'Реальное ESP32 сейчас не видно. Ниже остается демо-конфигурация RuView.'
-    );
-    ensureHardwareDisclaimer(hardware);
-  }
-
-  const sensingPanel = ensurePanel(sensing, 'hm-live-sensing-panel', '#sensingSourceBanner, .sensing-header');
-  if (sensingPanel) {
-    renderHomeMonitorPanel(
-      sensingPanel,
-      'Актуальность вкладки Sensing',
-      'Sensing читает тот же live endpoint /api/v1/sensing/latest, который обновляется через наш ESP32 UDP adapter.',
-      summary,
-      summary.source === 'esp32'
-        ? 'Да, вкладка Sensing сейчас показывает ваши live ESP32-derived данные. Важная оговорка: при режиме feature_state видны агрегаты presence/motion/vitals, а не полноценные raw CSI массивы для красивой dense pose реконструкции.'
-        : 'Сейчас Sensing показывает симуляцию или fallback, а не домашнее железо.'
-    );
-  }
-
-  const badgeMode = classifyLiveMode(summary);
-  const badgeClass = badgeMode.className;
-  upsertTabBadge('sensing', summary.source === 'esp32' && summary.hasData ? 'LIVE' : 'CHECK', badgeClass);
-  upsertTabBadge('hardware', summary.nodeCount ? `${summary.nodeCount} ESP32` : 'DEMO', badgeClass);
+  ensureHardwareDisclaimer(document.getElementById('hardware'));
+  updateNativeIndexFields(summary);
+  updatePoseFusionFields(summary);
+  updateObservatoryFields(summary);
+  updateStandalonePanels(summary);
+  updateTabBadges(summary);
 }
 
 async function refreshHomeMonitorLiveState() {
