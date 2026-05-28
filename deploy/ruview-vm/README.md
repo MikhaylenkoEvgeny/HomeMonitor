@@ -51,6 +51,9 @@ The main RuView tab row is replaced visually with HomeMonitor groups:
 Monitoring, Configuration, and Help/Lab. The original tabs remain in the DOM
 for RuView compatibility, hash routing, keyboard shortcuts, and lazy-loaded
 components.
+When the app is opened at `/`, the installer injects `<base href="/ui/">` into
+the copied RuView `index.html` so its relative CSS and JavaScript assets still
+load from `/ui/...`.
 The VM also exposes short links for the bundled RuView pages:
 
 - `/observatory` -> `/ui/observatory.html`

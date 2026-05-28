@@ -81,6 +81,14 @@ inject_i18n_script() {
   fi
 }
 
+inject_ui_base_href() {
+  local page_path="$1"
+
+  if [ -f "${page_path}" ] && ! grep -q '<base href="/ui/">' "${page_path}"; then
+    sed -i 's#<head>#<head>\n    <base href="/ui/">#' "${page_path}"
+  fi
+}
+
 prepare_ruview_ui() {
   echo "Preparing Russian RuView UI overlay..."
 
@@ -96,6 +104,7 @@ prepare_ruview_ui() {
   download_overlay_file "deploy/ruview-vm/ui-overrides/i18n.js" "ui/utils/i18n.js"
   download_overlay_file "deploy/ruview-vm/ui-overrides/sw.js" "ui/sw.js"
 
+  inject_ui_base_href "ui/index.html"
   inject_i18n_script "ui/observatory.html"
   inject_i18n_script "ui/pose-fusion.html"
   inject_i18n_script "ui/viz.html"
