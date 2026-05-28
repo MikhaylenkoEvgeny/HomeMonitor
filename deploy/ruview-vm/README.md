@@ -44,6 +44,9 @@ The public root `/` is mapped to RuView's native web app at `/ui/index.html`.
 The UI opens in Russian by default. Technical terms without stable Russian
 usage stay in English, for example CSI, RSSI, API, WebSocket, LoRA, RVF, PCK,
 OKS, FPS, WiFi DensePose, Pose Fusion, and Observatory.
+The HomeMonitor overlay also adds live panels to the Dashboard, Hardware, and
+Sensing tabs so the UI clearly separates real ESP32-derived data from the
+native RuView demo visualizations.
 The VM also exposes short links for the bundled RuView pages:
 
 - `/observatory` -> `/ui/observatory.html`

@@ -673,6 +673,477 @@ function scheduleApply(i18n) {
   });
 }
 
+const HOME_MONITOR_STYLE_ID = 'homemonitor-live-overlay-styles';
+const HOME_MONITOR_POLL_MS = 3000;
+
+let homeMonitorLiveTimer = null;
+let homeMonitorLastState = null;
+
+function safeNumber(value, fallback = null) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatFixed(value, digits = 1, suffix = '') {
+  const number = safeNumber(value);
+  if (number === null) return '-';
+  return `${number.toFixed(digits)}${suffix}`;
+}
+
+function formatTime(value) {
+  if (!value) return '-';
+  if (value instanceof Date) {
+    return value.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric)
+    ? new Date(numeric > 1_000_000_000_000 ? numeric : numeric * 1000)
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/gu, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
+}
+
+function classifyLiveMode(summary) {
+  if (summary.error) return { label: 'Нет связи', className: 'hm-live-bad' };
+  if (summary.source === 'esp32' && summary.hasData) return { label: 'LIVE ESP32', className: 'hm-live-good' };
+  if (summary.source === 'esp32') return { label: 'Жду ESP32', className: 'hm-live-warn' };
+  if (summary.source === 'simulated') return { label: 'Симуляция', className: 'hm-live-warn' };
+  return { label: 'Источник неясен', className: 'hm-live-warn' };
+}
+
+function injectHomeMonitorStyles() {
+  if (document.getElementById(HOME_MONITOR_STYLE_ID)) return;
+
+  const style = document.createElement('style');
+  style.id = HOME_MONITOR_STYLE_ID;
+  style.textContent = `
+    .hm-live-panel {
+      margin: 22px auto;
+      padding: 20px;
+      max-width: 1480px;
+      border: 1px solid rgba(36, 93, 104, 0.24);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(250, 252, 251, 0.98), rgba(244, 248, 247, 0.98));
+      box-shadow: 0 10px 28px rgba(18, 48, 55, 0.08);
+      color: #17343b;
+    }
+
+    .hm-live-panel.hm-live-compact {
+      margin-top: 0;
+    }
+
+    .hm-live-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .hm-live-title {
+      margin: 0 0 5px;
+      font-size: clamp(1.18rem, 1.4vw, 1.55rem);
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .hm-live-subtitle {
+      margin: 0;
+      max-width: 920px;
+      color: #5f6e74;
+      font-size: 0.98rem;
+      line-height: 1.45;
+    }
+
+    .hm-live-pill,
+    .hm-tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 26px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+
+    .hm-live-good {
+      color: #0d5a40;
+      background: #dff5ea;
+      border-color: #7ac9a2;
+    }
+
+    .hm-live-warn {
+      color: #80530e;
+      background: #fff3d7;
+      border-color: #e1b45f;
+    }
+
+    .hm-live-bad {
+      color: #8b1e24;
+      background: #fee1e4;
+      border-color: #df8a92;
+    }
+
+    .hm-live-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 12px;
+    }
+
+    .hm-live-metric {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid rgba(34, 112, 126, 0.22);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
+    }
+
+    .hm-live-metric span,
+    .hm-live-note-label {
+      display: block;
+      margin-bottom: 6px;
+      color: #68777d;
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .hm-live-metric strong {
+      display: block;
+      min-height: 1.55em;
+      overflow-wrap: anywhere;
+      color: #17343b;
+      font-size: clamp(1.05rem, 1.2vw, 1.35rem);
+      line-height: 1.2;
+    }
+
+    .hm-live-metric small {
+      display: block;
+      margin-top: 5px;
+      overflow-wrap: anywhere;
+      color: #64747a;
+      font-size: 0.88rem;
+      line-height: 1.3;
+    }
+
+    .hm-live-note {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-left: 4px solid #268b9a;
+      border-radius: 6px;
+      background: rgba(38, 139, 154, 0.08);
+      color: #334b53;
+      line-height: 1.45;
+    }
+
+    .hm-tab-badge {
+      margin-left: 8px;
+      min-height: 20px;
+      padding: 2px 7px;
+      color: #0d5a40;
+      background: #dff5ea;
+      border-color: #7ac9a2;
+      font-size: 0.66rem;
+      vertical-align: middle;
+    }
+
+    .hm-demo-disclaimer {
+      margin: 10px 0 18px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f5f7f7;
+      color: #5e6d72;
+      font-size: 0.94rem;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 900px) {
+      .hm-live-head {
+        flex-direction: column;
+      }
+
+      .hm-live-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .hm-live-panel {
+        margin: 14px 10px;
+        padding: 14px;
+      }
+
+      .hm-live-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+async function fetchHomeMonitorJson(path) {
+  const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+  return response.json();
+}
+
+function pickFirst(...values) {
+  return values.find(value => value !== undefined && value !== null && value !== '');
+}
+
+function buildHomeMonitorSummary(parts) {
+  const health = parts.health || {};
+  const status = parts.status || {};
+  const latest = parts.latest || {};
+  const nodes = Array.isArray(latest.nodes) ? latest.nodes : [];
+  const nodeFeatures = Array.isArray(latest.node_features) ? latest.node_features : [];
+  const firstNode = nodes[0] || {};
+  const firstFeature = nodeFeatures[0] || {};
+  const classification = latest.classification || {};
+  const vitals = latest.vital_signs || {};
+  const source = pickFirst(latest.source, status.source, health.source, 'unknown');
+  const hasNoDataStatus = String(latest.status || '').toLowerCase().includes('no data');
+  const hasRawCsi = nodes.some(node => {
+    const subcarriers = safeNumber(node.subcarrier_count, 0);
+    const amplitude = Array.isArray(node.amplitude) ? node.amplitude.length : 0;
+    const phase = Array.isArray(node.phase) ? node.phase.length : 0;
+    return subcarriers > 0 || amplitude > 0 || phase > 0;
+  });
+  const nodeIds = [...new Set([
+    ...nodes.map(node => node.node_id),
+    ...nodeFeatures.map(node => node.node_id)
+  ].filter(value => value !== undefined && value !== null))];
+  const timestamp = pickFirst(latest.timestamp, firstNode.timestamp, health.timestamp);
+
+  return {
+    error: parts.error || null,
+    source,
+    status: pickFirst(latest.status, status.status, health.status, 'unknown'),
+    hasData: !parts.error && !hasNoDataStatus && (nodes.length > 0 || nodeFeatures.length > 0 || Object.keys(vitals).length > 0),
+    hasRawCsi,
+    adapterMode: source === 'esp32' && !hasRawCsi && !hasNoDataStatus,
+    nodeCount: nodeIds.length || nodes.length || nodeFeatures.length || 0,
+    nodeLabel: nodeIds.length ? nodeIds.map(id => `node ${id}`).join(', ') : '-',
+    rssi: pickFirst(firstNode.rssi_dbm, firstFeature.rssi_dbm, latest.features?.mean_rssi),
+    presence: pickFirst(classification.presence, latest.presence),
+    motion: pickFirst(classification.motion, latest.motion_state, latest.motion),
+    confidence: pickFirst(classification.confidence, latest.confidence),
+    respiration: pickFirst(vitals.respiration_bpm, vitals.breathing_bpm, firstFeature.respiration_bpm),
+    heartRate: pickFirst(vitals.heart_rate_bpm, vitals.hr_bpm, firstFeature.heart_rate_bpm),
+    clients: pickFirst(health.clients, latest.clients),
+    tick: pickFirst(health.tick, latest.tick),
+    timestamp,
+    updatedAt: new Date()
+  };
+}
+
+function statusText(summary) {
+  if (summary.error) return 'API недоступен';
+  if (summary.source === 'esp32' && summary.hasData) return 'принимаем пакеты с ESP32';
+  if (summary.source === 'esp32') return 'ESP32 выбран, но новых пакетов пока нет';
+  if (summary.source === 'simulated') return 'идет симуляция без железа';
+  return `источник: ${summary.source}`;
+}
+
+function boolText(value) {
+  if (value === true) return 'да';
+  if (value === false) return 'нет';
+  if (typeof value === 'string') return value;
+  return '-';
+}
+
+function renderMetric(label, value, hint = '') {
+  return `
+    <div class="hm-live-metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${hint ? `<small>${escapeHtml(hint)}</small>` : ''}
+    </div>
+  `;
+}
+
+function renderHomeMonitorPanel(panel, title, subtitle, summary, note) {
+  const mode = classifyLiveMode(summary);
+  const rawText = summary.hasRawCsi ? 'raw CSI есть' : 'raw CSI нет';
+  const adapterText = summary.adapterMode ? 'feature_state через adapter' : rawText;
+  const lastSeen = formatTime(summary.timestamp);
+  const rssi = summary.rssi === undefined || summary.rssi === null ? '-' : `${formatFixed(summary.rssi, 0)} dBm`;
+  const motion = boolText(summary.motion);
+  const presence = boolText(summary.presence);
+  const respiration = summary.respiration === undefined || summary.respiration === null ? '-' : `${formatFixed(summary.respiration, 1)} bpm`;
+  const heartRate = summary.heartRate === undefined || summary.heartRate === null ? '-' : `${formatFixed(summary.heartRate, 1)} bpm`;
+  const confidence = summary.confidence === undefined || summary.confidence === null ? '-' : formatFixed(summary.confidence, 2);
+
+  panel.innerHTML = `
+    <div class="hm-live-head">
+      <div>
+        <h3 class="hm-live-title">${escapeHtml(title)}</h3>
+        <p class="hm-live-subtitle">${escapeHtml(subtitle)}</p>
+      </div>
+      <span class="hm-live-pill ${mode.className}">${escapeHtml(mode.label)}</span>
+    </div>
+    <div class="hm-live-grid">
+      ${renderMetric('Источник', summary.source, statusText(summary))}
+      ${renderMetric('Узлы', String(summary.nodeCount || 0), summary.nodeLabel)}
+      ${renderMetric('RSSI', rssi, 'оценка от ESP32/adapter')}
+      ${renderMetric('Присутствие', presence, `motion: ${motion}`)}
+      ${renderMetric('Дыхание', respiration, 'оценка vital signs')}
+      ${renderMetric('Пульс', heartRate, 'пока ориентировочно')}
+      ${renderMetric('CSI поток', adapterText, summary.hasRawCsi ? 'поступают массивы subcarriers' : 'сейчас UI получает агрегаты')}
+      ${renderMetric('Обновлено', lastSeen, `poll: ${formatTime(summary.updatedAt)}`)}
+    </div>
+    <div class="hm-live-note">
+      <span class="hm-live-note-label">Что это значит</span>
+      ${escapeHtml(note)}
+      ${confidence !== '-' ? `<br>Уверенность классификации: ${escapeHtml(confidence)}.` : ''}
+      ${summary.error ? `<br>Ошибка: ${escapeHtml(summary.error.message || summary.error)}` : ''}
+    </div>
+  `;
+}
+
+function ensurePanel(host, id, beforeSelector = null) {
+  if (!host) return null;
+  let panel = host.querySelector(`#${id}`);
+  if (panel) return panel;
+
+  panel = document.createElement('section');
+  panel.id = id;
+  panel.className = 'hm-live-panel';
+
+  const before = beforeSelector ? host.querySelector(beforeSelector) : null;
+  if (before) host.insertBefore(panel, before);
+  else host.insertBefore(panel, host.firstChild);
+  return panel;
+}
+
+function ensureHardwareDisclaimer(hardwareHost) {
+  if (!hardwareHost || hardwareHost.querySelector('#hm-hardware-demo-disclaimer')) return;
+  const grid = hardwareHost.querySelector('.hardware-grid');
+  if (!grid) return;
+  const disclaimer = document.createElement('div');
+  disclaimer.id = 'hm-hardware-demo-disclaimer';
+  disclaimer.className = 'hm-demo-disclaimer';
+  disclaimer.textContent = 'Схема антенн и переключатели ниже - демо RuView. Это не схема вашей ESP32-S3; реальное подключенное устройство показано в панели HomeMonitor выше.';
+  hardwareHost.insertBefore(disclaimer, grid);
+}
+
+function upsertTabBadge(tabName, text, className) {
+  const tab = document.querySelector(`.nav-tab[data-tab="${tabName}"], [data-tab="${tabName}"]`);
+  if (!tab) return;
+  let badge = tab.querySelector('.hm-tab-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'hm-tab-badge';
+    tab.appendChild(badge);
+  }
+  badge.textContent = text;
+  badge.className = `hm-tab-badge ${className || ''}`.trim();
+}
+
+function updateHomeMonitorLivePanels(summary) {
+  injectHomeMonitorStyles();
+
+  const dashboard = document.getElementById('dashboard');
+  const hardware = document.getElementById('hardware');
+  const sensing = document.getElementById('sensing');
+
+  const dashboardPanel = ensurePanel(dashboard, 'hm-live-dashboard-panel', '.status-grid, .live-status-panel');
+  if (dashboardPanel) {
+    dashboardPanel.classList.add('hm-live-compact');
+    renderHomeMonitorPanel(
+      dashboardPanel,
+      'HomeMonitor live',
+      'Короткая сводка по реальному источнику данных, который сейчас кормит облачный интерфейс.',
+      summary,
+      summary.source === 'esp32'
+        ? 'Панель получает live данные от ESP32 через UDP adapter на ВМ.'
+        : 'Пока работает не железо, а встроенная симуляция RuView.'
+    );
+  }
+
+  const hardwarePanel = ensurePanel(hardware, 'hm-live-hardware-panel', '.hardware-grid');
+  if (hardwarePanel) {
+    renderHomeMonitorPanel(
+      hardwarePanel,
+      'Реальное оборудование HomeMonitor',
+      'Эта панель показывает то, что действительно приходит на вашу облачную ВМ от ESP32.',
+      summary,
+      summary.source === 'esp32'
+        ? 'Да, устройство подключено к системе. Стандартный блок Hardware ниже оставлен как лабораторная визуализация RuView, а не паспорт вашей платы.'
+        : 'Реальное ESP32 сейчас не видно. Ниже остается демо-конфигурация RuView.'
+    );
+    ensureHardwareDisclaimer(hardware);
+  }
+
+  const sensingPanel = ensurePanel(sensing, 'hm-live-sensing-panel', '#sensingSourceBanner, .sensing-header');
+  if (sensingPanel) {
+    renderHomeMonitorPanel(
+      sensingPanel,
+      'Актуальность вкладки Sensing',
+      'Sensing читает тот же live endpoint /api/v1/sensing/latest, который обновляется через наш ESP32 UDP adapter.',
+      summary,
+      summary.source === 'esp32'
+        ? 'Да, вкладка Sensing сейчас показывает ваши live ESP32-derived данные. Важная оговорка: при режиме feature_state видны агрегаты presence/motion/vitals, а не полноценные raw CSI массивы для красивой dense pose реконструкции.'
+        : 'Сейчас Sensing показывает симуляцию или fallback, а не домашнее железо.'
+    );
+  }
+
+  const badgeMode = classifyLiveMode(summary);
+  const badgeClass = badgeMode.className;
+  upsertTabBadge('sensing', summary.source === 'esp32' && summary.hasData ? 'LIVE' : 'CHECK', badgeClass);
+  upsertTabBadge('hardware', summary.nodeCount ? `${summary.nodeCount} ESP32` : 'DEMO', badgeClass);
+}
+
+async function refreshHomeMonitorLiveState() {
+  const parts = {};
+  try {
+    const [health, status, latest] = await Promise.allSettled([
+      fetchHomeMonitorJson('/health'),
+      fetchHomeMonitorJson('/api/v1/status'),
+      fetchHomeMonitorJson('/api/v1/sensing/latest')
+    ]);
+    if (health.status === 'fulfilled') parts.health = health.value;
+    if (status.status === 'fulfilled') parts.status = status.value;
+    if (latest.status === 'fulfilled') parts.latest = latest.value;
+    const rejected = [health, status, latest].find(item => item.status === 'rejected');
+    if (!parts.health && !parts.status && !parts.latest && rejected) parts.error = rejected.reason;
+  } catch (error) {
+    parts.error = error;
+  }
+
+  homeMonitorLastState = buildHomeMonitorSummary(parts);
+  updateHomeMonitorLivePanels(homeMonitorLastState);
+}
+
+function startHomeMonitorLiveOverlay() {
+  if (homeMonitorLiveTimer) {
+    if (homeMonitorLastState) updateHomeMonitorLivePanels(homeMonitorLastState);
+    return;
+  }
+  injectHomeMonitorStyles();
+  refreshHomeMonitorLiveState();
+  homeMonitorLiveTimer = window.setInterval(refreshHomeMonitorLiveState, HOME_MONITOR_POLL_MS);
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshHomeMonitorLiveState();
+  });
+}
+
 export class I18n {
   constructor() {
     this.locale = this.getSavedLocale() || 'ru';
@@ -815,7 +1286,10 @@ export const i18n = new I18n();
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   window.ruviewI18n = i18n;
-  const start = () => i18n.init();
+  const start = () => {
+    i18n.init();
+    startHomeMonitorLiveOverlay();
+  };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true });
   } else {
