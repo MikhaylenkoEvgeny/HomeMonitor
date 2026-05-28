@@ -1118,7 +1118,12 @@ function ensurePanel(host, id, beforeSelector = null) {
   panel.className = 'hm-live-panel';
 
   const before = beforeSelector ? host.querySelector(beforeSelector) : null;
-  if (before) host.insertBefore(panel, before);
+  let insertionTarget = before;
+  while (insertionTarget && insertionTarget.parentNode !== host) {
+    insertionTarget = insertionTarget.parentNode;
+  }
+
+  if (insertionTarget && insertionTarget.parentNode === host) host.insertBefore(panel, insertionTarget);
   else host.insertBefore(panel, host.firstChild);
   return panel;
 }
