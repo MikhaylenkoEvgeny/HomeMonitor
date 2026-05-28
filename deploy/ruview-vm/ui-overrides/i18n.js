@@ -4,7 +4,7 @@
 
 const translations = {
   en: {
-    'nav.dashboard': 'Dashboard',
+    'nav.dashboard': 'Home Now',
     'nav.hardware': 'Hardware',
     'nav.demo': 'Live Demo',
     'nav.architecture': 'Architecture',
@@ -24,7 +24,7 @@ const translations = {
     'misc.language': 'Language'
   },
   ru: {
-    'nav.dashboard': 'Панель',
+    'nav.dashboard': 'Дом сейчас',
     'nav.hardware': 'Оборудование',
     'nav.demo': 'Live Demo',
     'nav.architecture': 'Архитектура',
@@ -47,7 +47,7 @@ const translations = {
 
 const exactRu = {
   // Navigation and global shell
-  'Dashboard': 'Панель',
+  'Dashboard': 'Дом сейчас',
   'Hardware': 'Оборудование',
   'Live Demo': 'Live Demo',
   'Architecture': 'Архитектура',
@@ -678,6 +678,10 @@ const HOME_MONITOR_POLL_MS = 3000;
 
 let homeMonitorLiveTimer = null;
 let homeMonitorLastState = null;
+let homeMonitorActiveGroup = null;
+let homeMonitorNavInitialized = false;
+let homeMonitorNavRenderKey = '';
+let homeMonitorNavObserver = null;
 
 function safeNumber(value, fallback = null) {
   const parsed = Number(value);
@@ -740,6 +744,139 @@ function injectHomeMonitorStyles() {
 
     .hm-live-panel.hm-live-compact {
       margin-top: 0;
+    }
+
+    .nav-tabs.hm-native-tabs-hidden {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      margin: -1px !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      clip: rect(0 0 0 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+
+    .hm-grouped-nav {
+      max-width: 1480px;
+      margin: 0 auto 24px;
+      padding: 0 16px;
+      color: #17343b;
+    }
+
+    .hm-grouped-shell {
+      border: 1px solid rgba(36, 93, 104, 0.2);
+      border-radius: 8px;
+      background: rgba(250, 252, 251, 0.96);
+      box-shadow: 0 8px 24px rgba(18, 48, 55, 0.07);
+    }
+
+    .hm-group-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      padding: 8px;
+      border-bottom: 1px solid rgba(36, 93, 104, 0.14);
+    }
+
+    .hm-group-button {
+      min-width: 0;
+      min-height: 48px;
+      padding: 8px 12px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: #52666d;
+      cursor: pointer;
+      text-align: left;
+      font: inherit;
+    }
+
+    .hm-group-button strong,
+    .hm-subnav-item strong {
+      display: block;
+      overflow-wrap: anywhere;
+      color: inherit;
+      font-size: 0.98rem;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .hm-group-button span,
+    .hm-subnav-item span {
+      display: block;
+      margin-top: 3px;
+      overflow-wrap: anywhere;
+      color: #6d7d83;
+      font-size: 0.78rem;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .hm-group-button:hover,
+    .hm-group-button:focus-visible {
+      border-color: rgba(38, 139, 154, 0.28);
+      background: rgba(38, 139, 154, 0.08);
+      outline: none;
+    }
+
+    .hm-group-button.active {
+      border-color: rgba(38, 139, 154, 0.42);
+      background: #e7f5f3;
+      color: #163940;
+    }
+
+    .hm-subnav {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .hm-subnav-item {
+      position: relative;
+      flex: 0 0 auto;
+      min-width: 170px;
+      max-width: 245px;
+      min-height: 62px;
+      padding: 10px 12px;
+      border: 1px solid rgba(36, 93, 104, 0.16);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.84);
+      color: #52666d;
+      cursor: pointer;
+      text-align: left;
+      text-decoration: none;
+      font: inherit;
+    }
+
+    .hm-subnav-item:hover,
+    .hm-subnav-item:focus-visible {
+      border-color: rgba(38, 139, 154, 0.34);
+      background: #f7fbfa;
+      outline: none;
+    }
+
+    .hm-subnav-item.active {
+      border-color: #268b9a;
+      background: #edf8f6;
+      color: #17343b;
+      box-shadow: inset 0 0 0 1px rgba(38, 139, 154, 0.16);
+    }
+
+    .hm-subnav-item .hm-tab-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      margin-left: 0;
+    }
+
+    .hm-subnav-item.has-badge strong {
+      padding-right: 78px;
     }
 
     .hm-live-head {
@@ -929,6 +1066,25 @@ function injectHomeMonitorStyles() {
     }
 
     @media (max-width: 900px) {
+      .hm-grouped-nav {
+        padding: 0 10px;
+      }
+
+      .hm-group-tabs {
+        display: flex;
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+
+      .hm-group-button {
+        flex: 0 0 180px;
+        min-height: 42px;
+      }
+
+      .hm-subnav-item {
+        min-width: 210px;
+      }
+
       .hm-live-head {
         flex-direction: column;
       }
@@ -1139,15 +1295,120 @@ function ensureHardwareDisclaimer(hardwareHost) {
   hardwareHost.insertBefore(disclaimer, grid);
 }
 
+function ensureSensingVisualizationDisclaimer(sensingHost) {
+  if (!sensingHost || sensingHost.querySelector('#hm-sensing-visualization-disclaimer')) return;
+  const layout = sensingHost.querySelector('.sensing-layout');
+  if (!layout) return;
+  const disclaimer = document.createElement('div');
+  disclaimer.id = 'hm-sensing-visualization-disclaimer';
+  disclaimer.className = 'hm-demo-disclaimer';
+  disclaimer.textContent = '3D-графика ниже - условная визуализация WiFi-сигнального поля. Зеленое пульсирующее пятно означает presence/дыхательную активность по сигналу, а не карту комнаты, силуэт человека или точные координаты.';
+  sensingHost.insertBefore(disclaimer, layout);
+}
+
+const HOME_MONITOR_GROUPS = [
+  {
+    id: 'monitoring',
+    label: 'Мониторинг',
+    description: 'Дом сейчас и live-сигнал',
+    items: [
+      {
+        label: 'Дом сейчас',
+        description: 'Сводка по дому',
+        target: 'dashboard',
+        kind: 'tab',
+        badgePolicy: 'live'
+      },
+      {
+        label: 'WiFi-сигнал / Sensing',
+        description: 'RSSI, presence, дыхание',
+        target: 'sensing',
+        kind: 'tab',
+        badgePolicy: 'live'
+      },
+      {
+        label: 'Операционные метрики',
+        description: 'Поток, adapter, качество',
+        target: 'performance',
+        kind: 'tab',
+        badgePolicy: 'metrics'
+      }
+    ]
+  },
+  {
+    id: 'configuration',
+    label: 'Конфигурация',
+    description: 'Железо и обучение',
+    items: [
+      {
+        label: 'Оборудование',
+        description: 'ESP32 и режим потока',
+        target: 'hardware',
+        kind: 'tab',
+        badgePolicy: 'esp32'
+      },
+      {
+        label: 'Обучение / Training',
+        description: 'Датасеты и модели',
+        target: 'training',
+        kind: 'tab',
+        badgePolicy: 'training'
+      }
+    ]
+  },
+  {
+    id: 'help',
+    label: 'Помощь',
+    description: 'Справка и Lab',
+    items: [
+      {
+        label: 'Как устроено',
+        description: 'Архитектура системы',
+        target: 'architecture',
+        kind: 'tab',
+        badgePolicy: 'reference'
+      },
+      {
+        label: 'Сценарии',
+        description: 'Что применимо дома',
+        target: 'applications',
+        kind: 'tab',
+        badgePolicy: 'reference'
+      },
+      {
+        label: 'Lab: Live Demo',
+        description: 'Демо-визуализация',
+        target: 'demo',
+        kind: 'tab',
+        badgePolicy: 'demo'
+      },
+      {
+        label: 'Lab: Pose Fusion',
+        description: 'Эксперимент fusion',
+        target: 'pose-fusion.html',
+        kind: 'page',
+        badgePolicy: 'partial'
+      },
+      {
+        label: 'Lab: Observatory',
+        description: '3D-песочница',
+        target: 'observatory.html',
+        kind: 'page',
+        badgePolicy: 'demo'
+      }
+    ]
+  }
+];
+
 const HOME_MONITOR_TAB_CONTEXTS = [
   {
     id: 'dashboard',
     panelId: 'hm-live-dashboard-panel',
     beforeSelector: '.live-status-panel',
     compact: true,
-    title: 'HomeMonitor live',
-    subtitle: 'Короткая сводка по реальному источнику данных, который сейчас кормит облачный интерфейс.',
-    liveNote: 'Панель получает live данные от ESP32 через UDP adapter на ВМ. Карточки ниже обновляются родным RuView API, но эта сводка является контрольной.',
+    title: 'Дом сейчас',
+    subtitle: 'Главная сводка HomeMonitor: присутствие, движение, дыхание, ESP32 online/offline и свежесть пакета.',
+    liveNote: 'Панель получает live данные от ESP32 через UDP adapter на ВМ. Это основной домашний экран; остальные блоки ниже оставлены как расширенные детали RuView.',
     fallbackNote: 'Пока работает не железо, а встроенная симуляция RuView или fallback браузера.'
   },
   {
@@ -1163,7 +1424,7 @@ const HOME_MONITOR_TAB_CONTEXTS = [
     id: 'demo',
     panelId: 'hm-live-demo-panel',
     beforeSelector: '.demo-controls, #demo-source-banner',
-    title: 'Live Demo: что здесь реально',
+    title: 'Lab: Live Demo',
     subtitle: 'Этот экран теперь получает live RSSI, presence, motion и confidence из HomeMonitor API.',
     liveNote: 'Числа в панели и базовые счетчики берутся из вашей ESP32. Визуальный скелет остается демо/оценкой RuView, пока нет стабильного raw CSI и обученной pose-модели.',
     fallbackNote: 'Live Demo сейчас работает как демонстрация RuView без домашнего ESP32-потока.'
@@ -1172,7 +1433,7 @@ const HOME_MONITOR_TAB_CONTEXTS = [
     id: 'architecture',
     panelId: 'hm-live-architecture-panel',
     beforeSelector: '.architecture-flow',
-    title: 'Архитектура именно вашей установки',
+    title: 'Как устроено',
     subtitle: 'ESP32-S3 дома отправляет UDP на облачную ВМ, adapter переводит поток в формат, который понимает RuView UI.',
     liveNote: 'Активная цепочка сейчас: ESP32-S3 -> UDP 5005 -> HomeMonitor adapter -> RuView API -> web UI. Блоки DensePose-RCNN и полноценный Pose Fusion пока являются целевой архитектурой, не текущим inference.',
     fallbackNote: 'Архитектура показана как справочная схема RuView. Реальная домашняя цепочка станет активной после появления ESP32-пакетов.'
@@ -1181,7 +1442,7 @@ const HOME_MONITOR_TAB_CONTEXTS = [
     id: 'performance',
     panelId: 'hm-live-performance-panel',
     beforeSelector: '.performance-chart',
-    title: 'Метрики вашей системы',
+    title: 'Операционные метрики',
     subtitle: 'Пока доступны эксплуатационные метрики live-потока: RSSI, presence/motion, vital signs и свежесть пакетов.',
     liveNote: 'Графики AP/PCK ниже - исследовательские ориентиры RuView, не измеренная точность у вас дома. Для домашней точности нужны размеченные записи и отдельная валидация.',
     fallbackNote: 'Ниже справочные показатели RuView. Домашние performance-метрики появятся после стабильного потока с ESP32.'
@@ -1199,9 +1460,9 @@ const HOME_MONITOR_TAB_CONTEXTS = [
     id: 'sensing',
     panelId: 'hm-live-sensing-panel',
     beforeSelector: '#sensingSourceBanner, .sensing-header',
-    title: 'Актуальность вкладки Sensing',
+    title: 'WiFi-сигнал / Sensing',
     subtitle: 'Sensing читает тот же live endpoint /api/v1/sensing/latest, который обновляется через наш ESP32 UDP adapter.',
-    liveNote: 'Да, вкладка Sensing сейчас показывает ваши live ESP32-derived данные. Важная оговорка: при режиме feature_state видны агрегаты presence/motion/vitals, а не полноценные raw CSI массивы для красивой dense pose реконструкции.',
+    liveNote: 'Да, вкладка Sensing сейчас показывает ваши live ESP32-derived данные. 3D-графика ниже - условная визуализация WiFi-сигнального поля: зеленое пульсирующее пятно означает presence/дыхательную активность, а не карту комнаты или силуэт человека.',
     fallbackNote: 'Сейчас Sensing показывает симуляцию или fallback, а не домашнее железо.'
   },
   {
@@ -1217,6 +1478,224 @@ const HOME_MONITOR_TAB_CONTEXTS = [
 
 function noteForContext(context, summary) {
   return summary.source === 'esp32' && summary.hasData ? context.liveNote : context.fallbackNote;
+}
+
+function getHomeMonitorItems() {
+  return HOME_MONITOR_GROUPS.flatMap(group => group.items.map(item => ({ ...item, groupId: group.id })));
+}
+
+function getHomeMonitorItemByTarget(target) {
+  return getHomeMonitorItems().find(item => item.target === target);
+}
+
+function getCurrentHomeMonitorTarget() {
+  const activeContent = document.querySelector('.tab-content.active');
+  if (activeContent?.id) return activeContent.id;
+  const hash = window.location.hash.replace('#', '').toLowerCase();
+  return hash || 'dashboard';
+}
+
+function getHomeMonitorActiveGroupId() {
+  const currentItem = getHomeMonitorItemByTarget(getCurrentHomeMonitorTarget());
+  if (currentItem) return currentItem.groupId;
+  if (homeMonitorActiveGroup && HOME_MONITOR_GROUPS.some(group => group.id === homeMonitorActiveGroup)) {
+    return homeMonitorActiveGroup;
+  }
+  return HOME_MONITOR_GROUPS[0].id;
+}
+
+function badgeForPolicy(policy, summary) {
+  const mode = classifyLiveMode(summary);
+  const live = summary.source === 'esp32' && summary.hasData;
+
+  if (policy === 'live') return { text: live ? 'LIVE' : 'CHECK', className: mode.className };
+  if (policy === 'esp32') {
+    return {
+      text: summary.nodeCount ? `${summary.nodeCount} ESP32` : 'WAIT',
+      className: summary.nodeCount ? mode.className : 'hm-live-warn'
+    };
+  }
+  if (policy === 'training') {
+    return {
+      text: summary.hasRawCsi ? 'READY' : 'NOT READY',
+      className: summary.hasRawCsi ? 'hm-live-good' : 'hm-live-warn'
+    };
+  }
+  if (policy === 'metrics') return { text: live ? 'LIVE' : 'CHECK', className: live ? 'hm-live-good' : 'hm-live-warn' };
+  if (policy === 'partial') return { text: live ? 'PARTIAL' : 'DEMO', className: 'hm-live-warn' };
+  if (policy === 'demo') return { text: 'DEMO', className: 'hm-live-warn' };
+  return { text: 'REFERENCE', className: 'hm-live-warn' };
+}
+
+function renderGroupedNavItem(item, summary, activeTarget) {
+  const badge = badgeForPolicy(item.badgePolicy, summary);
+  const isActive = item.kind === 'tab' && item.target === activeTarget;
+  const tag = item.kind === 'page' ? 'a' : 'button';
+  const href = item.kind === 'page' ? ` href="${escapeHtml(item.target)}"` : '';
+  const type = item.kind === 'page' ? '' : ' type="button"';
+  return `
+    <${tag}${type}${href}
+      class="hm-subnav-item has-badge ${isActive ? 'active' : ''}"
+      data-hm-nav-target="${escapeHtml(item.target)}"
+      data-hm-nav-kind="${escapeHtml(item.kind)}"
+      data-hm-nav-group="${escapeHtml(item.groupId)}"
+      ${isActive ? 'aria-current="page"' : ''}
+    >
+      <strong>${escapeHtml(item.label)}</strong>
+      <span>${escapeHtml(item.description)}</span>
+      <span class="hm-tab-badge ${badge.className}">${escapeHtml(badge.text)}</span>
+    </${tag}>
+  `;
+}
+
+function renderHomeMonitorGroupedNavigation(summary) {
+  const nativeNav = document.querySelector('.nav-tabs');
+  if (!nativeNav) return;
+  nativeNav.classList.add('hm-native-tabs-hidden');
+
+  let nav = document.getElementById('hm-grouped-nav');
+  if (!nav) {
+    nav = document.createElement('nav');
+    nav.id = 'hm-grouped-nav';
+    nav.className = 'hm-grouped-nav';
+    nav.setAttribute('aria-label', 'HomeMonitor navigation');
+    nativeNav.parentNode.insertBefore(nav, nativeNav);
+  }
+
+  const activeTarget = getCurrentHomeMonitorTarget();
+  const activeGroupId = getHomeMonitorActiveGroupId();
+  const group = HOME_MONITOR_GROUPS.find(candidate => candidate.id === activeGroupId) || HOME_MONITOR_GROUPS[0];
+  homeMonitorActiveGroup = group.id;
+
+  const badgeStateKey = [
+    summary.source,
+    summary.hasData ? 'data' : 'empty',
+    summary.hasRawCsi ? 'raw' : 'features',
+    summary.nodeCount,
+    summary.error ? 'error' : 'ok',
+    activeTarget,
+    group.id
+  ].join('|');
+
+  if (homeMonitorNavRenderKey === badgeStateKey) return;
+  homeMonitorNavRenderKey = badgeStateKey;
+
+  nav.innerHTML = `
+    <div class="hm-grouped-shell">
+      <div class="hm-group-tabs" role="tablist" aria-label="Группы HomeMonitor">
+        ${HOME_MONITOR_GROUPS.map(candidate => `
+          <button
+            type="button"
+            class="hm-group-button ${candidate.id === group.id ? 'active' : ''}"
+            data-hm-group="${escapeHtml(candidate.id)}"
+            aria-selected="${candidate.id === group.id ? 'true' : 'false'}"
+          >
+            <strong>${escapeHtml(candidate.label)}</strong>
+            <span>${escapeHtml(candidate.description)}</span>
+          </button>
+        `).join('')}
+      </div>
+      <div class="hm-subnav" aria-label="${escapeHtml(group.label)}">
+        ${group.items.map(item => renderGroupedNavItem({ ...item, groupId: group.id }, summary, activeTarget)).join('')}
+      </div>
+    </div>
+  `;
+
+  bindHomeMonitorGroupedNavigation(nav);
+}
+
+function navigateHomeMonitorItem(item) {
+  homeMonitorActiveGroup = item.groupId;
+  homeMonitorNavRenderKey = '';
+
+  if (item.kind === 'page') {
+    window.location.href = item.target;
+    return;
+  }
+
+  const nativeTab = document.querySelector(`.nav-tabs .nav-tab[data-tab="${item.target}"]`);
+  if (nativeTab) nativeTab.click();
+  if (window.location.hash.replace('#', '') !== item.target) {
+    history.replaceState(null, '', `#${item.target}`);
+  }
+  renderHomeMonitorGroupedNavigation(homeMonitorLastState || buildHomeMonitorSummary({}));
+}
+
+function bindHomeMonitorGroupedNavigation(nav) {
+  nav.querySelectorAll('[data-hm-group]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const group = HOME_MONITOR_GROUPS.find(candidate => candidate.id === button.getAttribute('data-hm-group'));
+      if (group) navigateHomeMonitorItem({ ...group.items[0], groupId: group.id });
+    });
+  });
+
+  nav.querySelectorAll('[data-hm-nav-target]').forEach(element => {
+    element.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const item = getHomeMonitorItems().find(candidate => (
+        candidate.target === element.getAttribute('data-hm-nav-target') &&
+        candidate.groupId === element.getAttribute('data-hm-nav-group')
+      ));
+      if (item) navigateHomeMonitorItem(item);
+    });
+  });
+}
+
+function setupHomeMonitorGroupedNavigation() {
+  if (homeMonitorNavInitialized) return;
+  homeMonitorNavInitialized = true;
+
+  document.addEventListener('click', event => {
+    const groupButton = event.target.closest?.('[data-hm-group]');
+    if (groupButton) {
+      event.preventDefault();
+      const group = HOME_MONITOR_GROUPS.find(candidate => candidate.id === groupButton.getAttribute('data-hm-group'));
+      if (!group) return;
+      homeMonitorActiveGroup = group.id;
+      navigateHomeMonitorItem({ ...group.items[0], groupId: group.id });
+      return;
+    }
+
+    const navItem = event.target.closest?.('[data-hm-nav-target]');
+    if (navItem) {
+      event.preventDefault();
+      const item = getHomeMonitorItems().find(candidate => (
+        candidate.target === navItem.getAttribute('data-hm-nav-target') &&
+        candidate.groupId === navItem.getAttribute('data-hm-nav-group')
+      ));
+      if (item) navigateHomeMonitorItem(item);
+    }
+  });
+
+  window.addEventListener('hashchange', () => {
+    window.setTimeout(() => {
+      homeMonitorNavRenderKey = '';
+      renderHomeMonitorGroupedNavigation(homeMonitorLastState || buildHomeMonitorSummary({}));
+    }, 0);
+  });
+
+  const container = document.querySelector('.container');
+  if (container && !homeMonitorNavObserver) {
+    homeMonitorNavObserver = new MutationObserver(mutations => {
+      const tabStateChanged = mutations.some(mutation => (
+        mutation.type === 'attributes' &&
+        mutation.attributeName === 'class' &&
+        mutation.target instanceof Element &&
+        mutation.target.classList.contains('tab-content')
+      ));
+      if (!tabStateChanged) return;
+      homeMonitorNavRenderKey = '';
+      renderHomeMonitorGroupedNavigation(homeMonitorLastState || buildHomeMonitorSummary({}));
+    });
+    homeMonitorNavObserver.observe(container, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class']
+    });
+  }
 }
 
 function upsertTabBadge(tabName, text, className) {
@@ -1394,6 +1873,8 @@ function updateTabBadges(summary) {
 
 function updateHomeMonitorLivePanels(summary) {
   injectHomeMonitorStyles();
+  setupHomeMonitorGroupedNavigation();
+  renderHomeMonitorGroupedNavigation(summary);
 
   for (const context of HOME_MONITOR_TAB_CONTEXTS) {
     const host = document.getElementById(context.id);
@@ -1404,6 +1885,7 @@ function updateHomeMonitorLivePanels(summary) {
   }
 
   ensureHardwareDisclaimer(document.getElementById('hardware'));
+  ensureSensingVisualizationDisclaimer(document.getElementById('sensing'));
   updateNativeIndexFields(summary);
   updatePoseFusionFields(summary);
   updateObservatoryFields(summary);
@@ -1580,6 +2062,12 @@ export class I18n {
       observer.disconnect();
       observer = null;
     }
+    if (homeMonitorNavObserver) {
+      homeMonitorNavObserver.disconnect();
+      homeMonitorNavObserver = null;
+    }
+    homeMonitorNavInitialized = false;
+    homeMonitorNavRenderKey = '';
     this.initialized = false;
   }
 }
