@@ -3,6 +3,7 @@
 // FPS, WiFi DensePose, Pose Fusion, and Observatory in English.
 
 import { DashboardTab } from '../components/DashboardTab.js';
+import { SensingTab } from '../components/SensingTab.js';
 import { sensingService } from '../services/sensing.service.js';
 import { backendDetector } from '../utils/backend-detector.js';
 
@@ -319,6 +320,7 @@ const exactRu = {
   'Sample Rate': 'Sample rate',
   'ABSENT': 'НЕТ ПРИСУТСТВИЯ',
   'PRESENT': 'ЕСТЬ ПРИСУТСТВИЕ',
+  'PRESENT_STILL': 'ЕСТЬ ПРИСУТСТВИЕ',
   'MOTION': 'ДВИЖЕНИЕ',
 
   // Training and models
@@ -562,6 +564,9 @@ const dynamicRules = [
   [/^Training epoch (\d+)\/(\d+)$/u, (_m, a, b) => `Эпоха обучения ${a}/${b}`],
   [/^(\d+) frames$/u, (_m, n) => `${n} кадров`],
   [/^(\d+) client\(s\)$/u, (_m, n) => `${n} клиент(ов)`],
+  [/^MOTION ([0-9.]+)%$/u, (_m, value) => `ДВИЖЕНИЕ ${value}%`],
+  [/^PRESENT_STILL ([0-9.]+)%$/u, (_m, value) => `ЕСТЬ ${value}%`],
+  [/^ABSENT ([0-9.]+)%$/u, (_m, value) => `НЕТ ${value}%`],
   [/^PCK: (.+)$/u, (_m, score) => `PCK: ${score}`],
   [/^Load failed: (.+)$/u, (_m, msg) => `Ошибка загрузки: ${msg}`],
   [/^Unload failed: (.+)$/u, (_m, msg) => `Ошибка выгрузки: ${msg}`],
@@ -603,6 +608,7 @@ function preserveOuterWhitespace(original, translated) {
 function shouldSkipTextNode(node) {
   const parent = node.parentElement;
   if (!parent) return true;
+  if (parent.closest?.('[data-homemonitor-managed="true"]')) return true;
   return ['SCRIPT', 'STYLE', 'TEXTAREA', 'CODE', 'PRE'].includes(parent.tagName);
 }
 
@@ -693,6 +699,7 @@ let homeMonitorNavObserver = null;
 let homeMonitorSensingDataUnsub = null;
 let homeMonitorSettingsObserver = null;
 let homeMonitorDashboardPatched = false;
+let homeMonitorSensingTabPatched = false;
 let homeMonitorBackendPatched = false;
 let homeMonitorCachesCleared = false;
 
@@ -741,6 +748,31 @@ function isHomeMonitorDemoFrame(data) {
   return data._simulated === true || isHomeMonitorDemoSource(data.source);
 }
 
+function homeMonitorDisplayMotionLevel(value) {
+  const level = String(value || '').toLowerCase();
+  if (level.includes('moving') || level.includes('motion') || level.includes('active')) return 'motion';
+  if (level.includes('present') || level.includes('still')) return 'present_still';
+  if (level.includes('absent') || level.includes('none')) return 'absent';
+  return level || 'absent';
+}
+
+function homeMonitorMotionLabel(value, present = false) {
+  const level = homeMonitorDisplayMotionLevel(value);
+  if (level === 'motion') return 'ДВИЖЕНИЕ';
+  if (level === 'present_still' || present) return 'ЕСТЬ ПРИСУТСТВИЕ';
+  return 'НЕТ ПРИСУТСТВИЯ';
+}
+
+function normalizeHomeMonitorClassification(classification) {
+  if (!classification || typeof classification !== 'object') return classification;
+  const motionLevel = homeMonitorDisplayMotionLevel(classification.motion_level || classification.motion);
+  return {
+    ...classification,
+    motion_level: motionLevel,
+    motion: motionLevel
+  };
+}
+
 function normalizeHomeMonitorSensingFrame(data) {
   if (!data || typeof data !== 'object') return data;
 
@@ -777,9 +809,20 @@ function normalizeHomeMonitorSensingFrame(data) {
     },
     _homemonitor_normalized: true
   };
+  normalized.classification = normalizeHomeMonitorClassification(normalized.classification);
 
   if (!normalized.classification.motion_level && normalized.classification.motion) {
     normalized.classification.motion_level = normalized.classification.motion;
+  }
+
+  if (Array.isArray(data.node_features)) {
+    normalized.node_features = data.node_features.map(node => {
+      if (!node || !node.classification) return node;
+      return {
+        ...node,
+        classification: normalizeHomeMonitorClassification(node.classification)
+      };
+    });
   }
 
   const rssi = pickFirst(featureWithClassification.rssi_dbm, data.features?.mean_rssi);
@@ -1265,6 +1308,11 @@ function injectHomeMonitorStyles() {
       filter: grayscale(1);
     }
 
+    .sensing-class-label.motion {
+      background: rgba(var(--color-error-rgb), 0.15);
+      color: var(--color-error);
+    }
+
     @media (max-width: 900px) {
       .hm-grouped-nav {
         padding: 0 10px;
@@ -1334,8 +1382,8 @@ function buildHomeMonitorSummary(parts) {
   const nodeFeatures = Array.isArray(latest.node_features) ? latest.node_features : [];
   const firstNode = nodes[0] || {};
   const firstFeature = nodeFeatures[0] || {};
-  const classification = latest.classification || {};
-  const nodeClassification = firstFeature.classification || {};
+  const classification = normalizeHomeMonitorClassification(latest.classification || {});
+  const nodeClassification = normalizeHomeMonitorClassification(firstFeature.classification || {});
   const vitals = latest.vital_signs || {};
   const source = pickFirst(latest.source, status.source, health.source, 'unknown');
   const hasNoDataStatus = String(latest.status || '').toLowerCase().includes('no data');
@@ -2073,27 +2121,51 @@ function installHomeMonitorDashboardPatch() {
   homeMonitorDashboardPatched = true;
 }
 
+function setHomeMonitorSensingClassLabel(root, summaryOrData) {
+  const container = root || document;
+  const classLabel = container.querySelector?.('#classLabel');
+  if (!classLabel) return;
+
+  const classification = normalizeHomeMonitorClassification(summaryOrData?.classification || {});
+  const motion = summaryOrData?.motion || classification.motion_level || classification.motion;
+  const present = hasPresence(summaryOrData || {}) || classification.presence === true;
+  const level = homeMonitorDisplayMotionLevel(motion);
+  classLabel.setAttribute('data-homemonitor-managed', 'true');
+  classLabel.textContent = homeMonitorMotionLabel(level, present);
+  classLabel.className = `sensing-class-label ${level}`;
+}
+
+function installHomeMonitorSensingTabPatch() {
+  if (homeMonitorSensingTabPatched || !SensingTab?.prototype) return;
+  if (typeof SensingTab.prototype._updateHUD !== 'function') return;
+
+  const originalUpdateHud = SensingTab.prototype._updateHUD;
+  SensingTab.prototype._updateHUD = function patchedUpdateHud(data, ...args) {
+    const normalized = normalizeHomeMonitorSensingFrame(data);
+    const result = originalUpdateHud.call(this, normalized, ...args);
+    setHomeMonitorSensingClassLabel(this.container, normalized);
+    return result;
+  };
+
+  homeMonitorSensingTabPatched = true;
+}
+
 function updateSensingFields(summary) {
   const sensing = document.getElementById('sensing');
   if (!sensing) return;
 
   const present = hasPresence(summary);
   const motion = String(summary.motion || '').toLowerCase();
-  const label = motion.includes('moving') || motion.includes('motion') || motion.includes('active')
-    ? 'MOTION'
-    : present ? 'PRESENT' : 'ABSENT';
+  const level = homeMonitorDisplayMotionLevel(motion);
   const confidence = safeNumber(summary.confidence, 0);
   const confidencePct = Math.max(0, Math.min(100, confidence <= 1 ? confidence * 100 : confidence));
 
   setText('#sensingRssi', formatRssi(summary), sensing);
   setText('#sensingSource', summary.source || 'esp32', sensing);
   setText('#sensingNodeCount', String(summary.nodeCount || 0), sensing);
-  setText('#classLabel', label, sensing);
   setText('#valConfidence', `${confidencePct.toFixed(0)}%`, sensing);
   setWidth('#barConfidence', confidencePct, sensing);
-
-  const classLabel = sensing.querySelector('#classLabel');
-  if (classLabel) classLabel.className = `sensing-class-label ${label.toLowerCase()}`;
+  setHomeMonitorSensingClassLabel(sensing, { ...summary, motion: level, presence: present });
 }
 
 function updatePoseFusionFields(summary) {
@@ -2332,6 +2404,7 @@ function startHomeMonitorLiveOverlay() {
   installHomeMonitorSensingPatch();
   installHomeMonitorBackendPatch();
   installHomeMonitorDashboardPatch();
+  installHomeMonitorSensingTabPatch();
   injectHomeMonitorStyles();
   setHomeMonitorDemoDataEnabled(homeMonitorDemoDataEnabled());
   observeHomeMonitorSettings();
