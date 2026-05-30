@@ -90,7 +90,7 @@ inject_ui_base_href() {
 }
 
 prepare_ruview_ui() {
-  echo "Preparing Russian RuView UI overlay..."
+  echo "Preparing HomeMonitor UI..."
 
   rm -rf ui
   mkdir -p ui
@@ -101,10 +101,12 @@ prepare_ruview_ui() {
   docker rm "${container_id}" >/dev/null
 
   mkdir -p ui/utils
+  download_overlay_file "deploy/ruview-vm/ui-overrides/index.html" "ui/index.html"
+  download_overlay_file "deploy/ruview-vm/ui-overrides/homemonitor.css" "ui/homemonitor.css"
+  download_overlay_file "deploy/ruview-vm/ui-overrides/homemonitor.js" "ui/homemonitor.js"
   download_overlay_file "deploy/ruview-vm/ui-overrides/i18n.js" "ui/utils/i18n.js"
   download_overlay_file "deploy/ruview-vm/ui-overrides/sw.js" "ui/sw.js"
 
-  inject_ui_base_href "ui/index.html"
   inject_i18n_script "ui/observatory.html"
   inject_i18n_script "ui/pose-fusion.html"
   inject_i18n_script "ui/viz.html"
@@ -149,7 +151,7 @@ fi
 cat > Caddyfile <<EOF_CADDY
 :80 {
   encode gzip zstd
-  header /ui/* Cache-Control "no-store"
+  header Cache-Control "no-store"
 
   ${BASIC_AUTH_BLOCK}
 

@@ -4,7 +4,10 @@ This is the current deployment path for the cloud UI: run the official RuView
 Docker image on a small Ubuntu/Debian VM and expose it by public IP.
 
 It intentionally does not build or serve the experimental `apps/web` dashboard.
-The VM serves the native RuView UI from `ruvnet/wifi-densepose:latest`.
+The VM runs the native RuView backend from `ruvnet/wifi-densepose:latest`, but
+serves a standalone HomeMonitor UI as the main page. The native RuView lab pages
+remain available under `/ui/pose-fusion.html`, `/ui/observatory.html`, and
+`/ui/viz.html`.
 
 ## One-command install
 
@@ -20,6 +23,17 @@ If the repository is private, run it with a GitHub token that can read this repo
 GITHUB_TOKEN=ghp_xxx sh -c 'curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/scripts/install-ruview-vm.sh | sudo -E bash'
 ```
 
+## Update existing VM UI
+
+For an already installed VM, refresh only the web UI files and restart Caddy:
+
+```bash
+cd /opt/homemonitor-ruview && sudo mkdir -p ui/utils && sudo curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/deploy/ruview-vm/ui-overrides/index.html -o ui/index.html && sudo curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/deploy/ruview-vm/ui-overrides/homemonitor.css -o ui/homemonitor.css && sudo curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/deploy/ruview-vm/ui-overrides/homemonitor.js -o ui/homemonitor.js && sudo curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/deploy/ruview-vm/ui-overrides/i18n.js -o ui/utils/i18n.js && sudo curl -fsSL https://raw.githubusercontent.com/MikhaylenkoEvgeny/HomeMonitor/main/deploy/ruview-vm/ui-overrides/sw.js -o ui/sw.js && sudo docker compose restart caddy
+```
+
+If the repository is private, add `-H "Authorization: Bearer $GITHUB_TOKEN"` to
+each `curl` command or rerun the full installer with `GITHUB_TOKEN`.
+
 The installer:
 
 - installs Docker if needed;
@@ -29,7 +43,8 @@ The installer:
 - starts a small UDP adapter on public `5005/udp` that forwards raw CSI and
   translates ESP32 ADR-081 `feature_state` packets into RuView-compatible edge
   vitals updates;
-- copies the native RuView UI from the Docker image and applies the HomeMonitor Russian UI overlay;
+- copies the native RuView UI from the Docker image and replaces the main
+  `/ui/index.html` with the standalone HomeMonitor Russian UI;
 - publishes ESP32 UDP `5005/udp` for later hardware;
 - persists models, state, and CSI recordings under `/opt/homemonitor-ruview/data`;
 - enables basic auth by default and prints the generated password.
@@ -40,20 +55,17 @@ Open:
 http://<VM_PUBLIC_IP>/
 ```
 
-The public root `/` is mapped to RuView's native web app at `/ui/index.html`.
-The UI opens in Russian by default. Technical terms without stable Russian
-usage stay in English, for example CSI, RSSI, API, WebSocket, LoRA, RVF, PCK,
-OKS, FPS, WiFi DensePose, Pose Fusion, and Observatory.
-The HomeMonitor overlay also adds live panels across the RuView tabs and
-standalone Pose Fusion/Observatory pages so the UI clearly separates real
-ESP32-derived data from native RuView demo/reference visualizations.
-The main RuView tab row is replaced visually with HomeMonitor groups:
-Monitoring, Configuration, and Help/Lab. The original tabs remain in the DOM
-for RuView compatibility, hash routing, keyboard shortcuts, and lazy-loaded
-components.
-When the app is opened at `/`, the installer injects `<base href="/ui/">` into
-the copied RuView `index.html` so its relative CSS and JavaScript assets still
-load from `/ui/...`.
+The public root `/` is mapped to HomeMonitor at `/ui/index.html`. The UI opens
+in Russian by default. Technical terms without stable Russian usage stay in
+English, for example CSI, RSSI, API, WebSocket, WiFi DensePose, Pose Fusion, and
+Observatory.
+
+The main HomeMonitor UI does not load the native RuView `app.js`; it reads the
+RuView backend directly through REST and `/ws/sensing`. This avoids competing
+demo/native updaters changing the same DOM fields and keeps live ESP32 frames
+stable. Demo/mock frames are ignored by default and can be enabled in the
+settings dialog only for UI testing.
+
 The VM also exposes short links for the bundled RuView pages:
 
 - `/observatory` -> `/ui/observatory.html`
@@ -90,8 +102,8 @@ keeps both paths working:
 
 - ADR-018 raw CSI and existing vitals packets are forwarded unchanged;
 - ADR-081 `feature_state` is converted to a minimal ADR-039 vitals packet so
-  `/api/v1/sensing/latest` and the native UI update even when raw CSI yield is
-  low on a quiet network.
+  `/api/v1/sensing/latest` and the HomeMonitor UI update even when raw CSI
+  yield is low on a quiet network.
 
 Useful diagnostics on the VM:
 

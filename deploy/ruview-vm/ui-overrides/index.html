@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/ui/">
+  <title>HomeMonitor</title>
+  <link rel="stylesheet" href="./homemonitor.css">
+  <link rel="manifest" href="./manifest.json">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">HM</div>
+        <div>
+          <h1>HomeMonitor</h1>
+          <p>Домашний мониторинг по WiFi-сигналу ESP32</p>
+        </div>
+      </div>
+
+      <div class="topbar-status">
+        <span class="status-pill status-wait" data-bind="modeLabel">Подключение</span>
+        <span class="topbar-meta" data-bind="clock">--:--:--</span>
+        <span class="topbar-meta" data-bind="freshness">нет данных</span>
+        <button class="icon-button" id="settingsButton" type="button" aria-label="Настройки" title="Настройки">
+          <span aria-hidden="true">⚙</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="group-nav" aria-label="Разделы HomeMonitor">
+      <button class="group-button active" type="button" data-group="monitoring">Мониторинг</button>
+      <button class="group-button" type="button" data-group="configuration">Конфигурация</button>
+      <button class="group-button" type="button" data-group="help">Помощь / Lab</button>
+    </nav>
+
+    <nav class="page-nav" aria-label="Страницы HomeMonitor"></nav>
+
+    <main class="page-stack">
+      <section class="page active" id="page-home" data-page="home">
+        <div class="page-heading">
+          <div>
+            <h2>Дом сейчас</h2>
+            <p>Единая live-сводка по текущему состоянию дома.</p>
+          </div>
+          <span class="status-pill" data-bind="sourceBadge">Источник не выбран</span>
+        </div>
+
+        <div class="hero-grid">
+          <section class="home-now">
+            <div class="presence-orb" data-presence-orb>
+              <span data-bind="presenceWord">Нет присутствия</span>
+            </div>
+            <div class="home-now-copy">
+              <p class="eyebrow">Состояние дома</p>
+              <h3 data-bind="homeSummary">Жду первые пакеты ESP32</h3>
+              <p data-bind="homeDetail">Когда ESP32 начнет передавать пакеты, здесь появятся presence, motion, RSSI и свежесть сигнала.</p>
+            </div>
+          </section>
+
+          <section class="signal-strip" aria-label="Основные показатели">
+            <div class="metric-tile">
+              <span>Присутствие</span>
+              <strong data-bind="presence">-</strong>
+              <small data-bind="motion">motion: -</small>
+            </div>
+            <div class="metric-tile">
+              <span>Уверенность</span>
+              <strong data-bind="confidence">-</strong>
+              <small>classification</small>
+            </div>
+            <div class="metric-tile">
+              <span>RSSI</span>
+              <strong data-bind="rssi">-</strong>
+              <small data-bind="rssiQuality">качество: -</small>
+            </div>
+            <div class="metric-tile">
+              <span>Дыхание</span>
+              <strong data-bind="breathing">Недоступно</strong>
+              <small data-bind="breathingReason">нет raw CSI</small>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>Live timeline</h3>
+            <p>Последние изменения состояния.</p>
+          </div>
+          <ol class="timeline" id="timeline"></ol>
+        </section>
+      </section>
+
+      <section class="page" id="page-signal" data-page="signal">
+        <div class="page-heading">
+          <div>
+            <h2>WiFi-сигнал / Sensing</h2>
+            <p>Операционная картина по ESP32: RSSI, classification, freshness и диагностические bands.</p>
+          </div>
+          <span class="status-pill" data-bind="signalMode">Нет данных</span>
+        </div>
+
+        <div class="signal-layout">
+          <section class="signal-visual">
+            <canvas id="signalCanvas" width="720" height="360" aria-label="Условная визуализация сигнала"></canvas>
+            <p>Это условная визуализация изменения WiFi-сигнала. Она не является картой комнаты, силуэтом человека или точными координатами.</p>
+          </section>
+
+          <section class="panel dense">
+            <div class="metric-list">
+              <div><span>RSSI</span><strong data-bind="sensingRssi">-- dBm</strong></div>
+              <div><span>Источник</span><strong data-bind="sensingSource">-</strong></div>
+              <div><span>ESP32 nodes</span><strong data-bind="sensingNodes">0</strong></div>
+              <div><span>Classification</span><strong data-bind="sensingClass">-</strong></div>
+              <div><span>Confidence</span><strong data-bind="sensingConfidence">-</strong></div>
+              <div><span>Пакет</span><strong data-bind="sensingFreshness">-</strong></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>Signal features</h3>
+            <p>Пока ESP32 отдает feature_state, эти значения могут быть нулевыми. Для дыхания нужен raw CSI поток.</p>
+          </div>
+          <div class="bar-grid">
+            <div class="bar-row"><span>Variance</span><div class="bar"><i data-bar="variance"></i></div><strong data-bind="variance">0.000</strong></div>
+            <div class="bar-row"><span>Motion band</span><div class="bar"><i data-bar="motionBand"></i></div><strong data-bind="motionBand">0.000</strong></div>
+            <div class="bar-row"><span>Breath band</span><div class="bar"><i data-bar="breathBand"></i></div><strong data-bind="breathBand">0.000</strong></div>
+            <div class="bar-row"><span>Spectral</span><div class="bar"><i data-bar="spectralPower"></i></div><strong data-bind="spectralPower">0.000</strong></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="page" id="page-metrics" data-page="metrics">
+        <div class="page-heading">
+          <div>
+            <h2>Операционные метрики</h2>
+            <p>Состояние backend, WebSocket, свежесть пакетов и режим данных.</p>
+          </div>
+        </div>
+
+        <div class="ops-grid">
+          <section class="panel dense">
+            <h3>Runtime</h3>
+            <div class="metric-list">
+              <div><span>API</span><strong data-bind="apiStatus">-</strong></div>
+              <div><span>WebSocket</span><strong data-bind="wsStatus">-</strong></div>
+              <div><span>Клиенты</span><strong data-bind="clients">-</strong></div>
+              <div><span>Tick</span><strong data-bind="tick">-</strong></div>
+            </div>
+          </section>
+
+          <section class="panel dense">
+            <h3>Поток данных</h3>
+            <div class="metric-list">
+              <div><span>Mode</span><strong data-bind="dataMode">-</strong></div>
+              <div><span>Raw CSI</span><strong data-bind="rawCsi">-</strong></div>
+              <div><span>Frame rate</span><strong data-bind="frameRate">-</strong></div>
+              <div><span>Subcarriers</span><strong data-bind="subcarriers">-</strong></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>RSSI history</h3>
+            <p>Последние live-значения без перерисовки всей страницы.</p>
+          </div>
+          <canvas id="rssiCanvas" width="960" height="240" aria-label="RSSI history"></canvas>
+        </section>
+      </section>
+
+      <section class="page" id="page-hardware" data-page="hardware">
+        <div class="page-heading">
+          <div>
+            <h2>Оборудование</h2>
+            <p>Реальные ESP32 nodes сверху. Экспериментальные страницы RuView находятся в Помощь / Lab.</p>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>ESP32 nodes</h3>
+            <p data-bind="hardwareSummary">Жду live ESP32.</p>
+          </div>
+          <div class="node-grid" id="nodeGrid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>Подключение</h3>
+            <p>ESP32 отправляет UDP на публичный IP VM, Caddy отдает веб-интерфейс, RuView backend принимает поток внутри Docker.</p>
+          </div>
+          <div class="connection-grid">
+            <div><span>UDP порт</span><strong>5005</strong></div>
+            <div><span>WiFi</span><strong>2.4 GHz</strong></div>
+            <div><span>Cloud access</span><strong>HTTP + Basic auth</strong></div>
+            <div><span>Home ports</span><strong>не нужны</strong></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="page" id="page-training" data-page="training">
+        <div class="page-heading">
+          <div>
+            <h2>Обучение / Training</h2>
+            <p>Раздел готовит требования к датасету. Обучение не запускается, пока нет raw CSI и разметки.</p>
+          </div>
+          <span class="status-pill status-warn">NOT READY</span>
+        </div>
+
+        <section class="panel">
+          <div class="checklist">
+            <div data-ready="raw"><strong>Raw CSI stream</strong><span data-bind="rawCsiTraining">нет</span></div>
+            <div data-ready="nodes"><strong>Несколько ESP32</strong><span data-bind="multiNodeTraining">нет</span></div>
+            <div data-ready="labels"><strong>Разметка / labels</strong><span>не настроено</span></div>
+            <div data-ready="retention"><strong>Хранилище датасета</strong><span>следующий этап</span></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="page" id="page-help" data-page="help">
+        <div class="page-heading">
+          <div>
+            <h2>Как устроено</h2>
+            <p>Справка по цепочке данных и ссылки на экспериментальные страницы RuView.</p>
+          </div>
+        </div>
+
+        <section class="panel architecture">
+          <div><strong>ESP32</strong><span>feature_state / позже raw CSI</span></div>
+          <div><strong>UDP adapter</strong><span>5005 UDP -> RuView format</span></div>
+          <div><strong>RuView backend</strong><span>REST + WebSocket</span></div>
+          <div><strong>HomeMonitor UI</strong><span>единый live state-store</span></div>
+        </section>
+
+        <section class="panel lab-links">
+          <a href="/ui/pose-fusion.html">Lab: Pose Fusion</a>
+          <a href="/ui/observatory.html">Lab: Observatory</a>
+          <a href="/ui/viz.html">Lab: Viz</a>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="settings-dialog" id="settingsDialog">
+    <form method="dialog">
+      <div class="dialog-head">
+        <h2>Настройки</h2>
+        <button class="icon-button" value="close" aria-label="Закрыть">×</button>
+      </div>
+      <label class="switch-row">
+        <span>
+          <strong>Демо-данные</strong>
+          <small>Если выключено, simulated/mock кадры полностью игнорируются.</small>
+        </span>
+        <input id="demoToggle" type="checkbox">
+      </label>
+      <label class="switch-row">
+        <span>
+          <strong>Presence hold</strong>
+          <small>Сглаживать одиночные пустые кадры, чтобы человек не мигал.</small>
+        </span>
+        <input id="presenceHoldToggle" type="checkbox" checked>
+      </label>
+    </form>
+  </dialog>
+
+  <script type="module" src="./homemonitor.js"></script>
+</body>
+</html>
